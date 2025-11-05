@@ -34,30 +34,6 @@ app.use(
   })
 );
 
-// app.use(
-//   session({
-//     store: new PgSession({
-//       pool: pool,
-//       tableName: "session",
-//     }),
-//     secret: process.env.SESSION_SECRET,
-//     resave: false,
-//     saveUninitialized: false,
-//     cookie: {
-//       maxAge: 1000 * 60 * 60 * 24, //1 day
-//       secure: false,
-//       httpOnly: true,
-//       sameSite: "lax",
-//     },
-//   })
-// );
-// app.use(
-//   cors({
-//     origin: ["http://192.168.1.6:3000", "http://localhost:3000"],
-//     credentials: true,
-//   })
-// );
-
 // Middlewares
 app.use(express.json()); // Body parser for JSON
 
@@ -66,12 +42,19 @@ const mainRoutes = require("./routes/index");
 const SignupRoute = require("./routes/auth/signup");
 const LoginRoute = require("./routes/auth/login");
 const CheckAuth = require("./routes/auth/check-status");
-
+const Logout = require("./routes/auth/logout");
+const passport = require("./auth/passport");
+const GoogleOauthRoutes = require("./routes/auth/google");
 // Mount Routes
+app.use(passport.initialize());
+app.use(passport.session());
 app.use("/", mainRoutes);
 app.use("/api/auth", SignupRoute); // All routes in SignupRoute will be prefixed with /api/auth
 app.use("/api/auth", LoginRoute);
+app.use("/api/auth", GoogleOauthRoutes);
 app.use("/api/auth", CheckAuth);
+app.use("/api/auth", Logout);
+
 app.listen(8000, "0.0.0.0", () => {
   console.log("Server is running on port 8000");
 });

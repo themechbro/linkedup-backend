@@ -2,8 +2,8 @@ const express = require("express");
 const router = express.Router();
 
 router.get("/check_auth", async (req, res) => {
-  console.log("Session:", req.session);
-  console.log("Cookies received:", req.headers.cookie);
+  // console.log("Session:", req.session);
+  // console.log("Cookies received:", req.headers.cookie);
   if (req.session.user) {
     return res.json({
       isAuthenticated: true,
