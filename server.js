@@ -45,6 +45,7 @@ const CheckAuth = require("./routes/auth/check-status");
 const Logout = require("./routes/auth/logout");
 const passport = require("./auth/passport");
 const GoogleOauthRoutes = require("./routes/auth/google");
+const FacebookOauthRoutes = require("./routes/auth/facebook");
 // Mount Routes
 app.use(passport.initialize());
 app.use(passport.session());
@@ -52,6 +53,7 @@ app.use("/", mainRoutes);
 app.use("/api/auth", SignupRoute); // All routes in SignupRoute will be prefixed with /api/auth
 app.use("/api/auth", LoginRoute);
 app.use("/api/auth", GoogleOauthRoutes);
+app.use("/api/auth", FacebookOauthRoutes);
 app.use("/api/auth", CheckAuth);
 app.use("/api/auth", Logout);
 
