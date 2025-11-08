@@ -14,8 +14,10 @@ router.get(
   (req, res) => {
     // Store session
     req.session.user = {
+      user_id: req.user.user_id,
       username: req.user.username,
       email: req.user.email,
+      type: req.user.type,
     };
 
     // Redirect to frontend home page

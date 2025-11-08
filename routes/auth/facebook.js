@@ -14,6 +14,8 @@ router.get(
     req.session.user = {
       username: req.user.username,
       email: req.user.email,
+      user_id: req.user.user_id,
+      type: req.user.type,
     };
     res.redirect(`${process.env.FRONTEND_URL}/home`);
   }

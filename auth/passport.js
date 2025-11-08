@@ -30,27 +30,34 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        const email = profile.emails[0].value;
-        const username = profile.displayName;
+        const email = profile.emails?.[0]?.value;
+        const firstName = profile.name?.givenName || "";
+        const lastName = profile.name?.familyName || "";
+        const fullName = `${firstName} ${lastName}`.trim();
 
-        let result = await pool.query("SELECT * FROM users WHERE email=$1", [
+        // fallback if fullName missing
+        const username = fullName || profile.displayName || "Google User";
+
+        const result = await pool.query("SELECT * FROM users WHERE email=$1", [
           email,
         ]);
-
         let user;
+
         if (result.rows.length === 0) {
-          // Create a new user if not found
-          result = await pool.query(
-            `INSERT INTO users (username, email, password, type, created_at)
-             VALUES ($1, $2, $3, $4, NOW())
+          const insertResult = await pool.query(
+            `INSERT INTO users (username, email, password, type, created_at, full_name)
+             VALUES ($1, $2, $3, $4, NOW(), $5)
              RETURNING *`,
-            [username, email, "oauth_user", "oauth_google"]
+            [username, email, "oauth_user", "oauth_google", fullName]
           );
+          user = insertResult.rows[0];
+        } else {
+          user = result.rows[0];
         }
 
-        user = result.rows[0];
         done(null, user);
       } catch (err) {
+        console.error("Google strategy error:", err);
         done(err, null);
       }
     }
@@ -111,16 +118,17 @@ passport.use(
         let user;
         if (result.rows.length === 0) {
           const insertResult = await pool.query(
-            `INSERT INTO users (username, email, password, type, created_at)
-         VALUES ($1, $2, $3, $4, NOW())
+            `INSERT INTO users (username, email, password, type, created_at, full_name)
+         VALUES ($1, $2, $3, $4, NOW(),$5)
          RETURNING *`,
             [
-              `${profile.name.givenName || ""} ${
-                profile.name.familyName || ""
+              `${profile.name.givenName || ""} 
               }`.trim(),
               email,
               "oauth_user",
               "oauth_fb",
+              `${profile.name.givenName || ""} ${profile.name.familyName || ""}
+              }`.trim(),
             ]
           );
           user = insertResult.rows[0];
