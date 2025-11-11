@@ -49,6 +49,7 @@ const FacebookOauthRoutes = require("./routes/auth/facebook");
 const UserDetailsRoutes = require("./routes/auth/user-details");
 const postRoutes = require("./routes/posts");
 const likeRoutes = require("./routes/likes");
+const commentRoutes = require("./routes/comments");
 // const UploadRoute = require("./routes/uploads");
 // Mount Routes
 app.use(passport.initialize());
@@ -63,6 +64,7 @@ app.use("/api/auth", Logout);
 app.use("/api/auth", UserDetailsRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/likes", likeRoutes);
+app.use("/api/posts", commentRoutes);
 
 // app.use("/api/upload", UploadRoute);
 
