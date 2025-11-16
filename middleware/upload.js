@@ -1,36 +1,24 @@
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-const { Upload } = require("@aws-sdk/lib-storage");
-const { PutObjectCommand } = require("@aws-sdk/client-s3");
-const s3Client = require("../config/s3");
 
-const upload = multer({ dest: "temp/" }); // store files temporarily
+const imagePath = path.join(__dirname, "..", "uploads", "images");
+const videoPath = path.join(__dirname, "..", "uploads", "videos");
 
-async function uploadToS3(file, folder = "uploads") {
-  const fileStream = fs.createReadStream(file.path);
-  const key = `${folder}/${Date.now()}-${file.originalname}`;
+if (!fs.existsSync(imagePath)) fs.mkdirSync(imagePath, { recursive: true });
+if (!fs.existsSync(videoPath)) fs.mkdirSync(videoPath, { recursive: true });
 
-  const upload = new Upload({
-    client: s3Client,
-    params: {
-      Bucket: process.env.AWS_S3_BUCKET,
-      Key: key,
-      Body: fileStream,
-      ContentType: file.mimetype,
-      // ACL: "public-read",
-    },
-  });
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const isVideo = file.mimetype.startsWith("video");
+    cb(null, isVideo ? videoPath : imagePath);
+  },
+  filename: (req, file, cb) => {
+    const filename = `${Date.now()}-${file.originalname}`;
+    cb(null, filename);
+  },
+});
 
-  const result = await upload.done();
+const upload = multer({ storage });
 
-  // Delete local temp file after upload
-  fs.unlinkSync(file.path);
-
-  return {
-    key,
-    url: `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
-  };
-}
-
-module.exports = { upload, uploadToS3 };
+module.exports = upload;

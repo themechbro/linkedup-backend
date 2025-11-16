@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { upload, uploadToS3 } = require("../middleware/upload");
+const upload = require("../middleware/upload");
 
 // Create Post
 router.post("/", upload.array("media", 5), async (req, res) => {
@@ -13,13 +13,15 @@ router.post("/", upload.array("media", 5), async (req, res) => {
     const { content } = req.body;
     const owner = req.session.user.user_id;
 
-    // Upload each file to S3 and collect URLs
-    const media = [];
-    for (const file of req.files) {
-      const folder = file.mimetype.startsWith("video") ? "videos" : "images";
-      const uploaded = await uploadToS3(file, folder);
-      media.push({ ...uploaded, type: folder });
-    }
+    const media = req.files.map((file) => {
+      const isVideo = file.mimetype.startsWith("video");
+      const type = isVideo ? "videos" : "images";
+
+      return {
+        url: `/uploads/${type}/${file.filename}`,
+        type,
+      };
+    });
 
     const result = await pool.query(
       `INSERT INTO posts (content, media_url, likes, status, owner, created_at)

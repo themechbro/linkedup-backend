@@ -1,5 +1,6 @@
 # node_nodules
 /node_modules
+/uploads
 
 # env
 .env

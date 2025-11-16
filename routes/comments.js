@@ -1,36 +1,48 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { upload, uploadToS3 } = require("../middleware/upload");
+const upload = require("../middleware/upload");
 const { v4: uuid } = require;
+const path = require("path");
+const fs = require("fs");
 
-router.post("/:post_id/comments", upload.single("image"), async (req, res) => {
-  const { post_id } = req.params;
-  const { content, parent_comment_id } = req.body;
-  const { user_id } = req.session.user;
-  let media_url = null;
-  if (!user_id) {
-    return res.status(401).json({ message: "Unauthorized", success: false });
-  }
-  try {
-    if (req.file) {
-      const uploaded = await uploadToS3(req.file, "comment-images");
-      media_url = uploaded.url;
-    }
+const commentImagesPath = path.join(
+  __dirname,
+  "..",
+  "uploads",
+  "comment-images"
+);
+if (!fs.existsSync(commentImagesPath)) {
+  fs.mkdirSync(commentImagesPath, { recursive: true });
+}
 
-    const result = await pool.query(
-      `INSERT INTO comments (post_id, user_id, parent_comment_id, content, media_url)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [post_id, user_id, parent_comment_id, content, media_url]
-    );
+// router.post("/:post_id/comments", upload.single("image"), async (req, res) => {
+//   const { post_id } = req.params;
+//   const { content, parent_comment_id } = req.body;
+//   const { user_id } = req.session.user;
+//   let media_url = null;
+//   if (!user_id) {
+//     return res.status(401).json({ message: "Unauthorized", success: false });
+//   }
+//   try {
+//     if (req.file) {
+//       const uploaded = await uploadToS3(req.file, "comment-images");
+//       media_url = uploaded.url;
+//     }
 
-    res.status(201).json({ success: true, comment: result.rows[0] });
-  } catch (err) {
-    console.error("Error posting comment:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
+//     const result = await pool.query(
+//       `INSERT INTO comments (post_id, user_id, parent_comment_id, content, media_url)
+//        VALUES ($1, $2, $3, $4, $5)
+//        RETURNING *`,
+//       [post_id, user_id, parent_comment_id, content, media_url]
+//     );
+
+//     res.status(201).json({ success: true, comment: result.rows[0] });
+//   } catch (err) {
+//     console.error("Error posting comment:", err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// });
 
 // router.get("/:post_id/comments", async (req, res) => {
 //   const { post_id } = req.params;
@@ -67,6 +79,43 @@ router.post("/:post_id/comments", upload.single("image"), async (req, res) => {
 //     res.status(500).json({ message: "Internal Server Error", success: false });
 //   }
 // });
+
+router.post("/:post_id/comments", upload.single("image"), async (req, res) => {
+  const { post_id } = req.params;
+  const { content, parent_comment_id } = req.body;
+  const { user_id } = req.session.user;
+
+  if (!user_id) {
+    return res.status(401).json({ message: "Unauthorized", success: false });
+  }
+
+  try {
+    let media_url = null;
+
+    if (req.file) {
+      // Move uploaded image to comment-images folder
+      const ext = req.file.originalname.split(".").pop();
+      const filename = `${Date.now()}-${req.file.originalname}`;
+      const finalPath = path.join(commentImagesPath, filename);
+
+      fs.renameSync(req.file.path, finalPath); // move file from temp folder
+
+      media_url = `/uploads/comment-images/${filename}`;
+    }
+
+    const result = await pool.query(
+      `INSERT INTO comments (post_id, user_id, parent_comment_id, content, media_url)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [post_id, user_id, parent_comment_id, content, media_url]
+    );
+
+    res.status(201).json({ success: true, comment: result.rows[0] });
+  } catch (err) {
+    console.error("Error posting comment:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 router.get("/:post_id/comments", async (req, res) => {
   const { post_id } = req.params;

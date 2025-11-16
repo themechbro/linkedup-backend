@@ -6,6 +6,7 @@ const pg = require("pg");
 const connectPgSimple = require("connect-pg-simple");
 const session = require("express-session");
 const pool = require("./db");
+const path = require("path");
 
 const PgSession = connectPgSimple(session);
 
@@ -36,6 +37,7 @@ app.use(
 
 // Middlewares
 app.use(express.json()); // Body parser for JSON
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Route Imports
 const mainRoutes = require("./routes/index");
@@ -50,6 +52,7 @@ const UserDetailsRoutes = require("./routes/auth/user-details");
 const postRoutes = require("./routes/posts");
 const likeRoutes = require("./routes/likes");
 const commentRoutes = require("./routes/comments");
+const UploadRouteforProfile = require("./routes/uploads");
 // const UploadRoute = require("./routes/uploads");
 // Mount Routes
 app.use(passport.initialize());
@@ -65,6 +68,7 @@ app.use("/api/auth", UserDetailsRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/likes", likeRoutes);
 app.use("/api/posts", commentRoutes);
+app.use("/api/upload", UploadRouteforProfile);
 
 // app.use("/api/upload", UploadRoute);
 
