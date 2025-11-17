@@ -53,6 +53,7 @@ const postRoutes = require("./routes/posts");
 const likeRoutes = require("./routes/likes");
 const commentRoutes = require("./routes/comments");
 const UploadRouteforProfile = require("./routes/uploads");
+
 // const UploadRoute = require("./routes/uploads");
 // Mount Routes
 app.use(passport.initialize());
