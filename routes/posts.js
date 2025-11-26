@@ -65,16 +65,32 @@ router.get("/", async (req, res) => {
     }
 
     // Fetch posts with author info
+    // const result = await pool.query(`
+    //   SELECT
+    //     p.*,
+    //     u.username,
+    //     u.full_name,
+    //     u.type
+    //   FROM posts p
+    //   JOIN users u ON p.owner = u.user_id
+    //   ORDER BY p.created_at DESC
+    // `);
+
     const result = await pool.query(`
-      SELECT 
-        p.*,
-        u.username,
-        u.full_name,
-        u.type
-      FROM posts p
-      JOIN users u ON p.owner = u.user_id
-      ORDER BY p.created_at DESC
-    `);
+      SELECT  
+  p.*,
+  u.username,
+  u.full_name,
+  u.type,
+  u.profile_picture,
+  COUNT(c.comment_id) AS comment_count
+FROM posts p
+JOIN users u ON p.owner = u.user_id
+LEFT JOIN comments c ON c.post_id = p.id
+GROUP BY p.id, u.user_id
+ORDER BY p.created_at DESC
+
+      `);
 
     // Mark whether current user liked each post
     const posts = result.rows.map((post) => ({
