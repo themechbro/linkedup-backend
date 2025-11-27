@@ -30,10 +30,10 @@ router.post("/:type", upload.any(), async (req, res) => {
       }
 
       if (type === "cover_pic") {
-        await pool.query(
-          `UPDATE users SET cover_picture = $1 WHERE user_id = $2`,
-          [fileUrl, user.user_id]
-        );
+        await pool.query(`UPDATE users SET cover_pic = $1 WHERE user_id = $2`, [
+          fileUrl,
+          user.user_id,
+        ]);
       }
     }
 

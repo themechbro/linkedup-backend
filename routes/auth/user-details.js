@@ -12,7 +12,7 @@ router.get("/user_details", async (req, res) => {
     });
   }
   const { user_id } = user;
-  const query = `SELECT full_name, headline, profile_picture  FROM users WHERE user_id=$1`;
+  const query = `SELECT full_name, headline, profile_picture, cover_pic  FROM users WHERE user_id=$1`;
   const dbReq = await pool.query(query, [user_id]);
   if (dbReq.rowCount == 0) {
     return res
