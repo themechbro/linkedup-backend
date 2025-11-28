@@ -5,10 +5,10 @@ const { v4: uuidv4 } = require("uuid");
 const bcrypt = require("bcryptjs");
 
 router.post("/signup", async (req, res) => {
-  const { email, password, username } = req.body;
+  const { email, password, username, full_name } = req.body;
   console.log(email, password, username);
 
-  if (!email || !password || !username) {
+  if (!email || !password || !username || !full_name) {
     return res.status(422).json({
       message: "Enter your Credentials Properly",
       success: false,
@@ -32,10 +32,10 @@ router.post("/signup", async (req, res) => {
     const type = "normal";
 
     const result = await pool.query(
-      `INSERT INTO users(user_id,email, password, created_at, type, username)
-        VALUES($1,$2,$3,NOW(),$4,$5)
+      `INSERT INTO users(user_id,email, password, created_at, type, username, full_name )
+        VALUES($1,$2,$3,NOW(),$4,$5, $6)
         `,
-      [user_id, email, hashedPassword, type, username]
+      [user_id, email, hashedPassword, type, username, full_name]
     );
 
     return res.status(201).json({
