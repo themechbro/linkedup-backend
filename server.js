@@ -35,6 +35,16 @@ app.use(
   })
 );
 
+// pool.query(
+//   `
+//   SELECT table_name
+//   FROM information_schema.tables
+//   WHERE table_schema='public'
+// `,
+//   (err, res) => {
+//     console.log("TABLES VISIBLE TO BACKEND:", res?.rows);
+//   }
+// );
 // Middlewares
 app.use(express.json()); // Body parser for JSON
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));

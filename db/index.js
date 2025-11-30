@@ -1,18 +1,18 @@
-const { Pool } = require("pg");
 const dotenv = require("dotenv");
 dotenv.config();
+const { Pool } = require("pg");
 
 const pool = new Pool({
   // It's a good practice to have fallback values
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  database: process.env.DB_DATABSE,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+  host: process.env.PGHOST,
+  port: process.env.PGPORT,
+  database: process.env.PGDATABSE,
+  user: process.env.PGUSER,
+  password: process.env.PGPASSWORD,
 });
 
 pool.on("connect", () => {
-  console.log("Connected to Supabase PG");
+  console.log("Connected to Local DB");
 });
 
 pool.on("error", (err) => {
