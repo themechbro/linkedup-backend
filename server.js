@@ -63,6 +63,7 @@ const postRoutes = require("./routes/post/posts");
 const likeRoutes = require("./routes/likes");
 const commentRoutes = require("./routes/comments");
 const UploadRouteforProfile = require("./routes/uploads");
+const ConnectionRoutes = require("./routes/connections/request");
 
 // const UploadRoute = require("./routes/uploads");
 // Mount Routes
@@ -80,6 +81,9 @@ app.use("/api/posts", postRoutes);
 app.use("/api/likes", likeRoutes);
 app.use("/api/posts", commentRoutes);
 app.use("/api/upload", UploadRouteforProfile);
+
+//connections
+app.use("/api/connections", ConnectionRoutes);
 
 // app.use("/api/upload", UploadRoute);
 

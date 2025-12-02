@@ -86,10 +86,95 @@ router.post("/", upload.array("media", 5), async (req, res) => {
 //   }
 // });
 
+// router.get("/", async (req, res) => {
+//   try {
+//     const currentUser = req.session.user;
+
+//     if (!currentUser) {
+//       return res.status(401).json({ message: "Unauthorized" });
+//     }
+
+//     const limit = parseInt(req.query.limit) || 10;
+//     const offset = parseInt(req.query.offset) || 0;
+
+//     // -----------------------------
+//     // 1) Fetch main posts as usual
+//     // -----------------------------
+//     const result = await pool.query(
+//       `
+//       SELECT
+//         p.*,
+//         u.username,
+//         u.full_name,
+//         u.type,
+//         u.profile_picture,
+//         COUNT(c.comment_id) AS comment_count
+//         cr.status AS request_status,
+//         cr.sender_id,
+//         cr.receiver_id,
+//         con.user_id AS connected_user
+// FROM posts p
+//       JOIN users u ON p.owner = u.user_id
+//       LEFT JOIN comments c ON c.post_id = p.id
+// LEFT JOIN connection_requests cr
+//   ON (cr.sender_id = $3 AND cr.receiver_id = p.owner)
+//   OR (cr.sender_id = p.owner AND cr.receiver_id = $3)
+// LEFT JOIN connections con
+//   ON (con.user_id = $3 AND con.connection_id = p.owner)
+//       GROUP BY p.id, u.user_id
+//       ORDER BY p.created_at DESC
+//       LIMIT $1 OFFSET $2;
+//       `,
+//       [limit, offset]
+//     );
+
+//     const posts = [];
+
+//     // -----------------------------
+//     // 2) Loop through posts & attach original post if it's a repost
+//     // -----------------------------
+//     for (let post of result.rows) {
+//       let enriched = {
+//         ...post,
+//         liked_by_me: post.liked_by?.includes(currentUser.user_id) || false,
+//         current_user: currentUser.user_id,
+//       };
+
+//       if (post.repost_of) {
+//         // Fetch the original post with user details
+//         const original = await pool.query(
+//           `
+//           SELECT
+//             p.*,
+//             u.username,
+//             u.full_name,
+//             u.type,
+//             u.profile_picture
+//           FROM posts p
+//           JOIN users u ON p.owner = u.user_id
+//           WHERE p.id = $1
+//           LIMIT 1;
+//           `,
+//           [post.repost_of]
+//         );
+
+//         enriched.original_post =
+//           original.rowCount > 0 ? original.rows[0] : null;
+//       }
+
+//       posts.push(enriched);
+//     }
+
+//     return res.json(posts);
+//   } catch (err) {
+//     console.error("Error fetching posts:", err);
+//     res.status(500).json({ message: "Internal server error" });
+//   }
+// });
+
 router.get("/", async (req, res) => {
   try {
     const currentUser = req.session.user;
-
     if (!currentUser) {
       return res.status(401).json({ message: "Unauthorized" });
     }
@@ -97,9 +182,9 @@ router.get("/", async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = parseInt(req.query.offset) || 0;
 
-    // -----------------------------
-    // 1) Fetch main posts as usual
-    // -----------------------------
+    // -----------------------------------------
+    // ⭐ MAIN FEED QUERY (Posts + User + Conn)
+    // -----------------------------------------
     const result = await pool.query(
       `
       SELECT  
@@ -108,31 +193,67 @@ router.get("/", async (req, res) => {
         u.full_name,
         u.type,
         u.profile_picture,
-        COUNT(c.comment_id) AS comment_count
+        COUNT(c.comment_id) AS comment_count,
+
+        -- Connection Request Info
+        cr.status AS request_status,
+        cr.sender_id,
+        cr.receiver_id,
+
+        -- Connected Status
+        con.user_id AS connected_user
+
       FROM posts p
-      JOIN users u ON p.owner = u.user_id
-      LEFT JOIN comments c ON c.post_id = p.id
-      GROUP BY p.id, u.user_id
+      JOIN users u 
+        ON p.owner = u.user_id
+
+      LEFT JOIN comments c 
+        ON c.post_id = p.id
+
+      -- Any pending request between viewer and post owner
+      LEFT JOIN connection_requests cr 
+        ON (cr.sender_id = $3 AND cr.receiver_id = p.owner)
+        OR (cr.sender_id = p.owner AND cr.receiver_id = $3)
+
+      -- If already connected
+      LEFT JOIN connections con
+        ON (con.user_id = $3 AND con.connection_id = p.owner)
+
+      GROUP BY p.id, u.user_id, cr.status, cr.sender_id, cr.receiver_id, con.user_id
       ORDER BY p.created_at DESC
-      LIMIT $1 OFFSET $2;
+      LIMIT $1 OFFSET $2
       `,
-      [limit, offset]
+      [limit, offset, currentUser.user_id]
     );
 
+    //------------------------------------------------------------
+    // ⭐ PROCESS POSTS + REPOST LOGIC + CONNECTION STATUS
+    //------------------------------------------------------------
     const posts = [];
 
-    // -----------------------------
-    // 2) Loop through posts & attach original post if it's a repost
-    // -----------------------------
     for (let post of result.rows) {
+      let status = "not_connected";
+      const viewer = currentUser.user_id;
+
+      // Already connected
+      if (post.connected_user) {
+        status = "connected";
+      }
+      // Pending request exists
+      else if (post.request_status === "pending") {
+        if (post.sender_id === viewer) status = "pending"; // YOU sent request
+        else status = "incoming_request"; // THEY sent request
+      }
+
       let enriched = {
         ...post,
-        liked_by_me: post.liked_by?.includes(currentUser.user_id) || false,
-        current_user: currentUser.user_id,
+        connection_status: status,
+        liked_by_me: post.liked_by?.includes(viewer) || false,
+        current_user: viewer,
       };
 
+      // ⭐ If this post is a repost → fetch original post
       if (post.repost_of) {
-        // Fetch the original post with user details
         const original = await pool.query(
           `
           SELECT  
@@ -144,7 +265,7 @@ router.get("/", async (req, res) => {
           FROM posts p
           JOIN users u ON p.owner = u.user_id
           WHERE p.id = $1
-          LIMIT 1;
+          LIMIT 1
           `,
           [post.repost_of]
         );
