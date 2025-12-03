@@ -185,44 +185,90 @@ router.get("/", async (req, res) => {
     // -----------------------------------------
     // ⭐ MAIN FEED QUERY (Posts + User + Conn)
     // -----------------------------------------
+    // const result = await pool.query(
+    //   `
+    //   SELECT
+    //     p.*,
+    //     u.username,
+    //     u.full_name,
+    //     u.type,
+    //     u.profile_picture,
+    //     COUNT(c.comment_id) AS comment_count,
+
+    //     -- Connection Request Info
+    //     cr.status AS request_status,
+    //     cr.sender_id,
+    //     cr.receiver_id,
+
+    //     -- Connected Status
+    //     con.user_id AS connected_user
+
+    //   FROM posts p
+    //   JOIN users u
+    //     ON p.owner = u.user_id
+
+    //   LEFT JOIN comments c
+    //     ON c.post_id = p.id
+
+    //   -- Any pending request between viewer and post owner
+    //   LEFT JOIN connection_requests cr
+    //     ON (cr.sender_id = $3 AND cr.receiver_id = p.owner)
+    //     OR (cr.sender_id = p.owner AND cr.receiver_id = $3)
+
+    //   -- If already connected
+    //   LEFT JOIN connections con
+    //     ON (con.user_id = $3 AND con.connection_id = p.owner)
+
+    //   GROUP BY p.id, u.user_id, cr.status, cr.sender_id, cr.receiver_id, con.user_id
+    //   ORDER BY p.created_at DESC
+    //   LIMIT $1 OFFSET $2
+    //   `,
+    //   [limit, offset, currentUser.user_id]
+    // );
+
     const result = await pool.query(
       `
-      SELECT  
-        p.*,
-        u.username,
-        u.full_name,
-        u.type,
-        u.profile_picture,
-        COUNT(c.comment_id) AS comment_count,
+  SELECT  
+    p.*,
+    u.username,
+    u.full_name,
+    u.type,
+    u.profile_picture,
+    COUNT(DISTINCT c.comment_id) AS comment_count,
 
-        -- Connection Request Info
-        cr.status AS request_status,
-        cr.sender_id,
-        cr.receiver_id,
+    -- Connection Request Info (use DISTINCT ON or pick one specific record)
+    MAX(CASE 
+      WHEN (cr.sender_id = $3 AND cr.receiver_id = p.owner AND cr.status = 'pending') 
+      THEN 'pending_sent'
+      WHEN (cr.sender_id = p.owner AND cr.receiver_id = $3 AND cr.status = 'pending') 
+      THEN 'pending_received'
+      ELSE NULL 
+    END) AS request_status,
 
-        -- Connected Status
-        con.user_id AS connected_user
+    -- Connected Status
+    BOOL_OR(con.user_id IS NOT NULL) AS is_connected
 
-      FROM posts p
-      JOIN users u 
-        ON p.owner = u.user_id
+  FROM posts p
+  JOIN users u 
+    ON p.owner = u.user_id
 
-      LEFT JOIN comments c 
-        ON c.post_id = p.id
+  LEFT JOIN comments c 
+    ON c.post_id = p.id
 
-      -- Any pending request between viewer and post owner
-      LEFT JOIN connection_requests cr 
-        ON (cr.sender_id = $3 AND cr.receiver_id = p.owner)
-        OR (cr.sender_id = p.owner AND cr.receiver_id = $3)
+  -- Only join PENDING requests (ignore rejected/accepted)
+  LEFT JOIN connection_requests cr 
+    ON ((cr.sender_id = $3 AND cr.receiver_id = p.owner)
+        OR (cr.sender_id = p.owner AND cr.receiver_id = $3))
+    AND cr.status = 'pending'  -- 👈 CRITICAL: Only pending requests
 
-      -- If already connected
-      LEFT JOIN connections con
-        ON (con.user_id = $3 AND con.connection_id = p.owner)
+  -- If already connected
+  LEFT JOIN connections con
+    ON (con.user_id = $3 AND con.connection_id = p.owner)
 
-      GROUP BY p.id, u.user_id, cr.status, cr.sender_id, cr.receiver_id, con.user_id
-      ORDER BY p.created_at DESC
-      LIMIT $1 OFFSET $2
-      `,
+  GROUP BY p.id, u.user_id  -- 👈 SIMPLIFIED: Only group by post and user
+  ORDER BY p.created_at DESC
+  LIMIT $1 OFFSET $2
+  `,
       [limit, offset, currentUser.user_id]
     );
 
@@ -236,13 +282,14 @@ router.get("/", async (req, res) => {
       const viewer = currentUser.user_id;
 
       // Already connected
-      if (post.connected_user) {
+      if (post.is_connected) {
         status = "connected";
       }
-      // Pending request exists
-      else if (post.request_status === "pending") {
-        if (post.sender_id === viewer) status = "pending"; // YOU sent request
-        else status = "incoming_request"; // THEY sent request
+      // Check request status
+      else if (post.request_status === "pending_sent") {
+        status = "pending"; // YOU sent request
+      } else if (post.request_status === "pending_received") {
+        status = "incoming_request"; // THEY sent request
       }
 
       let enriched = {
@@ -251,7 +298,6 @@ router.get("/", async (req, res) => {
         liked_by_me: post.liked_by?.includes(viewer) || false,
         current_user: viewer,
       };
-
       // ⭐ If this post is a repost → fetch original post
       if (post.repost_of) {
         const original = await pool.query(
