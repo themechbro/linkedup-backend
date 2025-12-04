@@ -82,6 +82,20 @@ router.post("/accept", async (req, res) => {
     const { sender_id } = req.body;
     const receiver_id = req.session.user.user_id;
 
+    const existingConnection = await pool.query(
+      `SELECT * FROM connections 
+       WHERE (user_id = $1 AND connection_id = $2) 
+          OR (user_id = $2 AND connection_id = $1)`,
+      [sender_id, receiver_id]
+    );
+
+    if (existingConnection.rows.length > 0) {
+      return res.status(400).json({
+        message: "Already connected",
+        success: false,
+      });
+    }
+
     // 👇 DELETE the request after creating connection
     await pool.query(
       `DELETE FROM connection_requests 
@@ -230,4 +244,38 @@ router.get("/check_connection", async (req, res) => {
   }
 });
 
+router.get("/connection_length_user", async (req, res) => {
+  try {
+    const user = req.session.user;
+    const { user_id } = req.query;
+
+    // Optional: Remove this check if you want this endpoint to be public
+    if (!user) {
+      return res.status(401).json({ message: "Unauthorised", success: false });
+    }
+
+    if (!user_id) {
+      return res
+        .status(400)
+        .json({ message: "Profile ID required", success: false });
+    }
+
+    // 👇 Use COUNT instead of fetching all rows
+    const query = `SELECT COUNT(*) AS connection_count FROM connections WHERE user_id = $1`;
+    const response = await pool.query(query, [user_id]);
+
+    const totalConnections = parseInt(response.rows[0].connection_count);
+
+    return res.status(200).json({
+      totalConnections, // Changed from totalConnection for consistency
+      success: true,
+      forProfile: user_id,
+    });
+  } catch (err) {
+    console.error("Error fetching connection count:", err);
+    return res
+      .status(500)
+      .json({ message: "Internal server error", success: false });
+  }
+});
 module.exports = router;
