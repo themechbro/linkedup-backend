@@ -65,6 +65,7 @@ const commentRoutes = require("./routes/comments");
 const UploadRouteforProfile = require("./routes/uploads");
 const ConnectionRoutes = require("./routes/connections/request");
 const SuggestionConnectionRoute = require("./routes/connections/suggestions");
+const MessagingAllRoutes = require("./routes/messaging/message");
 
 // const UploadRoute = require("./routes/uploads");
 // Mount Routes
@@ -86,6 +87,9 @@ app.use("/api/upload", UploadRouteforProfile);
 //connections
 app.use("/api/connections", ConnectionRoutes);
 app.use("/api/connections", SuggestionConnectionRoute);
+
+// Messaging
+app.use("/api/messages", MessagingAllRoutes);
 
 // app.use("/api/upload", UploadRoute);
 

@@ -76,4 +76,38 @@ router.get("/suggestions", async (req, res) => {
   }
 });
 
+router.get("/get_connection_list", async (req, res) => {
+  try {
+    const currentUser = req.session.user;
+
+    if (!currentUser) {
+      return res.status(401).json({ message: "Unauthorized" }); // ✅ Use res.status().json()
+    }
+
+    const query = `
+      SELECT 
+        u.user_id,
+        u.username,
+        u.full_name,
+        u.profile_picture,
+        u.headline
+      FROM connections c
+      JOIN users u ON c.connection_id = u.user_id
+      WHERE c.user_id = $1
+      ORDER BY u.full_name ASC
+    `;
+
+    const result = await pool.query(query, [currentUser.user_id]);
+
+    return res.status(200).json({
+      // ✅ Use res.status().json()
+      success: true,
+      connections: result.rows,
+    });
+  } catch (err) {
+    console.error("Error fetching connections list:", err);
+    return res.status(500).json({ message: "Internal server error" }); // ✅ Use res.status().json()
+  }
+});
+
 module.exports = router;
