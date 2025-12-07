@@ -5,7 +5,7 @@ const upload = require("../../middleware/upload");
 const { v4: uuidv4 } = require("uuid");
 
 // Create Post
-router.post("/", upload.array("media", 5), async (req, res) => {
+router.post("/", upload.array("media", 10), async (req, res) => {
   try {
     if (!req.session.user || !req.session.user.user_id) {
       return res.status(401).json({ message: "Unauthorized" });

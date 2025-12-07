@@ -47,6 +47,7 @@ app.use(
 // );
 // Middlewares
 app.use(express.json()); // Body parser for JSON
+app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Route Imports

@@ -77,6 +77,121 @@ router.get("/all-conversation", async (req, res) => {
 });
 
 // Send a new message
+// router.post("/send_new_message", async (req, res) => {
+//   try {
+//     const currentUser = req.session.user;
+//     if (!currentUser) {
+//       return res.status(401).json({ message: "Unauthorized", success: false });
+//     }
+
+//     const { receiver_id, content } = await req.json();
+
+//     if (!receiver_id || !content || content.trim() === "") {
+//       return res
+//         .status(400)
+//         .json({ message: "Receiver and content are required", success: false });
+//     }
+
+//     // Check if users are connected
+//     const connectionCheck = await pool.query(
+//       `SELECT * FROM connections
+//        WHERE user_id = $1 AND connection_id = $2`,
+//       [currentUser.user_id, receiver_id]
+//     );
+
+//     if (connectionCheck.rows.length === 0) {
+//       return res.status(403).json({
+//         message: "You can only message your connections",
+//         success: false,
+//       });
+//     }
+
+//     // Insert message
+//     const result = await pool.query(
+//       `INSERT INTO messages (sender_id, receiver_id, content)
+//        VALUES ($1, $2, $3)
+//        RETURNING *`,
+//       [currentUser.user_id, receiver_id, content.trim()]
+//     );
+//     return res.status(200).json({ message: result.rows[0], success: true });
+//   } catch (err) {
+//     console.error("Error sending message:", err);
+//     return res
+//       .status(500)
+//       .json({ message: "Internal server error", success: false });
+//   }
+// });
+
+// // Get Messages for Specific Conversation
+// router.get("/get-coversation-specific/:userId", async (req, res) => {
+//   try {
+//     const currentUser = req.session.user;
+//     if (!currentUser) {
+//       return res.status(401).json({ message: "Unauthorized", success: false });
+//     }
+
+//     const { userId } = req.params;
+//     const { searchParams } = new URL(req.url);
+//     const limit = parseInt(searchParams.get("limit")) || 50;
+//     const offset = parseInt(searchParams.get("offset")) || 0;
+
+//     // Check if connected
+//     const connectionCheck = await pool.query(
+//       `SELECT * FROM connections
+//        WHERE user_id = $1 AND connection_id = $2`,
+//       [currentUser.user_id, userId]
+//     );
+
+//     if (connectionCheck.rows.length === 0) {
+//       return res
+//         .status(403)
+//         .json({ message: "Not connected with this user", success: false });
+//     }
+
+//     // Fetch messages
+//     const query = `
+//       SELECT
+//         m.*,
+//         u.full_name AS sender_name,
+//         u.username AS sender_username,
+//         u.profile_picture AS sender_picture
+//       FROM messages m
+//       JOIN users u ON m.sender_id = u.user_id
+//       WHERE
+//         (m.sender_id = $1 AND m.receiver_id = $2)
+//         OR (m.sender_id = $2 AND m.receiver_id = $1)
+//       ORDER BY m.created_at DESC
+//       LIMIT $3 OFFSET $4
+//     `;
+
+//     const result = await pool.query(query, [
+//       currentUser.user_id,
+//       userId,
+//       limit,
+//       offset,
+//     ]);
+
+//     // Mark messages as read
+//     await pool.query(
+//       `UPDATE messages
+//        SET read = TRUE
+//        WHERE receiver_id = $1 AND sender_id = $2 AND read = FALSE`,
+//       [currentUser.user_id, userId]
+//     );
+
+//     return res.status(200).json({
+//       success: true,
+//       messages: result.rows.reverse(),
+//     });
+//   } catch (err) {
+//     console.error("Error fetching messages:", err);
+//     return res
+//       .status(500)
+//       .json({ message: "Internal server error", success: false });
+//   }
+// });
+
+// Send a new message - FIXED
 router.post("/send_new_message", async (req, res) => {
   try {
     const currentUser = req.session.user;
@@ -84,12 +199,13 @@ router.post("/send_new_message", async (req, res) => {
       return res.status(401).json({ message: "Unauthorized", success: false });
     }
 
-    const { receiver_id, content } = await req.json();
+    const { receiver_id, content } = req.body; // ✅ FIXED
 
     if (!receiver_id || !content || content.trim() === "") {
-      return res
-        .status(400)
-        .json({ message: "Receiver and content are required", success: false });
+      return res.status(400).json({
+        message: "Receiver and content are required",
+        success: false,
+      });
     }
 
     // Check if users are connected
@@ -113,16 +229,21 @@ router.post("/send_new_message", async (req, res) => {
        RETURNING *`,
       [currentUser.user_id, receiver_id, content.trim()]
     );
-    return res.status(200).json({ message: result.rows[0], success: true });
+
+    return res.status(200).json({
+      message: result.rows[0],
+      success: true,
+    });
   } catch (err) {
     console.error("Error sending message:", err);
-    return res
-      .status(500)
-      .json({ message: "Internal server error", success: false });
+    return res.status(500).json({
+      message: "Internal server error",
+      success: false,
+    });
   }
 });
 
-// Get Messages for Specific Conversation
+// Get Messages - FIXED
 router.get("/get-coversation-specific/:userId", async (req, res) => {
   try {
     const currentUser = req.session.user;
@@ -131,9 +252,8 @@ router.get("/get-coversation-specific/:userId", async (req, res) => {
     }
 
     const { userId } = req.params;
-    const { searchParams } = new URL(req.url);
-    const limit = parseInt(searchParams.get("limit")) || 50;
-    const offset = parseInt(searchParams.get("offset")) || 0;
+    const limit = parseInt(req.query.limit) || 50; // ✅ FIXED
+    const offset = parseInt(req.query.offset) || 0; // ✅ FIXED
 
     // Check if connected
     const connectionCheck = await pool.query(
@@ -143,9 +263,10 @@ router.get("/get-coversation-specific/:userId", async (req, res) => {
     );
 
     if (connectionCheck.rows.length === 0) {
-      return res
-        .status(403)
-        .json({ message: "Not connected with this user", success: false });
+      return res.status(403).json({
+        message: "Not connected with this user",
+        success: false,
+      });
     }
 
     // Fetch messages
@@ -181,17 +302,18 @@ router.get("/get-coversation-specific/:userId", async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      messages: result.rows.reverse(),
+      messages: result.rows.reverse(), // Oldest first
     });
   } catch (err) {
     console.error("Error fetching messages:", err);
-    return res
-      .status(500)
-      .json({ message: "Internal server error", success: false });
+    return res.status(500).json({
+      message: "Internal server error",
+      success: false,
+    });
   }
 });
 
-// Mark as read
+// Mark as read - FIXED
 router.post("/mark_as_read", async (req, res) => {
   try {
     const currentUser = req.session.user;
@@ -199,7 +321,7 @@ router.post("/mark_as_read", async (req, res) => {
       return res.status(401).json({ message: "Unauthorized", success: false });
     }
 
-    const { sender_id } = await req.json();
+    const { sender_id } = req.body;
 
     await pool.query(
       `UPDATE messages 
@@ -211,11 +333,38 @@ router.post("/mark_as_read", async (req, res) => {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("Error marking as read:", err);
-    return res
-      .status(500)
-      .json({ message: "Internal server error", success: false });
+    return res.status(500).json({
+      message: "Internal server error",
+      success: false,
+    });
   }
 });
+
+// Mark as read
+// router.post("/mark_as_read", async (req, res) => {
+//   try {
+//     const currentUser = req.session.user;
+//     if (!currentUser) {
+//       return res.status(401).json({ message: "Unauthorized", success: false });
+//     }
+
+//     const { sender_id } = await req.json();
+
+//     await pool.query(
+//       `UPDATE messages
+//        SET read = TRUE
+//        WHERE receiver_id = $1 AND sender_id = $2 AND read = FALSE`,
+//       [currentUser.user_id, sender_id]
+//     );
+
+//     return res.status(200).json({ success: true });
+//   } catch (err) {
+//     console.error("Error marking as read:", err);
+//     return res
+//       .status(500)
+//       .json({ message: "Internal server error", success: false });
+//   }
+// });
 
 // Unread Count
 router.get("/unread_chat_count", async (req, res) => {
