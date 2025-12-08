@@ -393,4 +393,55 @@ router.get("/unread_chat_count", async (req, res) => {
   }
 });
 
+// like a message
+router.post("/like_a_message", async (req, res) => {
+  const user = req.session.user;
+  if (!user)
+    return res.status(401).json({ message: "Unauthorised", success: false });
+  const { msg_id } = req.query;
+  const userId = user.user_id;
+
+  try {
+    const checkLikedAlready = await pool.query(
+      `SELECT liked_by FROM messages WHERE message_id=$1`,
+      [msg_id]
+    );
+    if (checkLikedAlready.rows.length === 0) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+
+    const likedBy = checkLikedAlready.rows[0].liked_by || [];
+    let updatedLikes;
+    let newLikedBy;
+
+    if (likedBy.includes(userId)) {
+      // 2️⃣ Unlike: remove user from array
+      newLikedBy = likedBy.filter((id) => id !== userId);
+      updatedLikes = newLikedBy.length;
+    } else {
+      // 3️⃣ Like: add user to array
+      newLikedBy = [...likedBy, userId];
+      updatedLikes = newLikedBy.length;
+    }
+
+    await pool.query(
+      `UPDATE messages SET liked_by=$1, likes=$2 WHERE message_id=$3`,
+      [newLikedBy, updatedLikes, msg_id]
+    );
+
+    res.status(200).json({
+      message: likedBy.includes(userId)
+        ? "Message unliked successfully"
+        : "Message liked successfully",
+      liked: !likedBy.includes(userId),
+      likes: updatedLikes,
+    });
+  } catch (err) {
+    console.log(err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal Server Error" });
+  }
+});
+
 module.exports = router;
