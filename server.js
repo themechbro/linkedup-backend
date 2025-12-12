@@ -34,17 +34,6 @@ app.use(
     },
   })
 );
-
-// pool.query(
-//   `
-//   SELECT table_name
-//   FROM information_schema.tables
-//   WHERE table_schema='public'
-// `,
-//   (err, res) => {
-//     console.log("TABLES VISIBLE TO BACKEND:", res?.rows);
-//   }
-// );
 // Middlewares
 app.use(express.json()); // Body parser for JSON
 app.use(express.urlencoded({ extended: true }));
@@ -67,6 +56,7 @@ const UploadRouteforProfile = require("./routes/uploads");
 const ConnectionRoutes = require("./routes/connections/request");
 const SuggestionConnectionRoute = require("./routes/connections/suggestions");
 const MessagingAllRoutes = require("./routes/messaging/message");
+const JobAllRoutes = require("./routes/jobs/job");
 
 // const UploadRoute = require("./routes/uploads");
 // Mount Routes
@@ -91,6 +81,9 @@ app.use("/api/connections", SuggestionConnectionRoute);
 
 // Messaging
 app.use("/api/messages", MessagingAllRoutes);
+
+// Jobs
+app.use("/api/jobs", JobAllRoutes);
 
 // app.use("/api/upload", UploadRoute);
 
