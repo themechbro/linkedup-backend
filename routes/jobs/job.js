@@ -14,8 +14,15 @@ router.post("/", async (req, res) => {
 
     const userId = sessionUser.user_id;
 
-    const { title, company, location, job_type, description, is_brand } =
-      req.body;
+    const {
+      title,
+      company,
+      location,
+      job_type,
+      description,
+      is_brand,
+      applyLink,
+    } = req.body;
 
     if (!title || !company) {
       return res
@@ -26,11 +33,20 @@ router.post("/", async (req, res) => {
     const result = await pool.query(
       `
       INSERT INTO jobs 
-        (title, company, location, job_type, description, posted_by, is_brand)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (title, company, location, job_type, description, posted_by, is_brand, applylink)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *;
       `,
-      [title, company, location, job_type, description, userId, is_brand]
+      [
+        title,
+        company,
+        location,
+        job_type,
+        description,
+        userId,
+        is_brand,
+        applyLink,
+      ]
     );
 
     return res.status(201).json({
@@ -48,23 +64,50 @@ router.post("/", async (req, res) => {
  * Fetch all active jobs
  */
 
+// router.get("/", async (req, res) => {
+//   try {
+//     const result = await pool.query(`
+//       SELECT j.*, u.full_name AS posted_by_name, u.profile_picture as posted_by_pic
+//       FROM jobs j
+//       LEFT JOIN users u ON u.user_id = j.posted_by
+//       WHERE j.status = 'active'
+//       ORDER BY j.created_at DESC;
+//     `);
+
+//     return res.status(200).json(result.rows);
+//   } catch (error) {
+//     console.error("Error fetching jobs:", error);
+//     return res.status(500).json({ message: "Internal server error" });
+//   }
+// });
+
 router.get("/", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT j.*, u.full_name AS posted_by_name
-      FROM jobs j
-      LEFT JOIN users u ON u.id = j.posted_by
-      WHERE j.status = 'active'
-      ORDER BY j.created_at DESC;
-    `);
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = parseInt(req.query.offset) || 0;
 
-    return res.status(200).json(result.rows);
+    const result = await pool.query(
+      `
+      SELECT j.*, u.full_name AS posted_by_name, u.profile_picture as posted_by_pic
+      FROM jobs j
+      LEFT JOIN users u ON u.user_id = j.posted_by
+      WHERE j.status = 'active'
+      ORDER BY j.created_at DESC
+      LIMIT $1 OFFSET $2
+    `,
+      [limit, offset]
+    );
+
+    return res.status(200).json({
+      success: true,
+      jobs: result.rows,
+      count: result.rows.length,
+    });
   } catch (error) {
     console.error("Error fetching jobs:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 });
-
 /**
  * GET /jobs/:id
  * Fetch single job by ID
