@@ -181,50 +181,9 @@ router.get("/", async (req, res) => {
 
     const limit = parseInt(req.query.limit) || 10;
     const offset = parseInt(req.query.offset) || 0;
-
     // -----------------------------------------
     // ⭐ MAIN FEED QUERY (Posts + User + Conn)
     // -----------------------------------------
-    // const result = await pool.query(
-    //   `
-    //   SELECT
-    //     p.*,
-    //     u.username,
-    //     u.full_name,
-    //     u.type,
-    //     u.profile_picture,
-    //     COUNT(c.comment_id) AS comment_count,
-
-    //     -- Connection Request Info
-    //     cr.status AS request_status,
-    //     cr.sender_id,
-    //     cr.receiver_id,
-
-    //     -- Connected Status
-    //     con.user_id AS connected_user
-
-    //   FROM posts p
-    //   JOIN users u
-    //     ON p.owner = u.user_id
-
-    //   LEFT JOIN comments c
-    //     ON c.post_id = p.id
-
-    //   -- Any pending request between viewer and post owner
-    //   LEFT JOIN connection_requests cr
-    //     ON (cr.sender_id = $3 AND cr.receiver_id = p.owner)
-    //     OR (cr.sender_id = p.owner AND cr.receiver_id = $3)
-
-    //   -- If already connected
-    //   LEFT JOIN connections con
-    //     ON (con.user_id = $3 AND con.connection_id = p.owner)
-
-    //   GROUP BY p.id, u.user_id, cr.status, cr.sender_id, cr.receiver_id, con.user_id
-    //   ORDER BY p.created_at DESC
-    //   LIMIT $1 OFFSET $2
-    //   `,
-    //   [limit, offset, currentUser.user_id]
-    // );
 
     const result = await pool.query(
       `
@@ -519,6 +478,141 @@ router.post("/:postId/repost", async (req, res) => {
   } catch (err) {
     console.error("Repost Error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Fetch specific post using postId
+// router.get("/getPost", async (req, res) => {
+//   const { postId } = req.query;
+//   const user = req.session.user;
+//   if (!postId)
+//     return res.status(400).json({ message: "Bad requesyt", success: false });
+//   if (!user)
+//     return res.status(401).json({ message: "Unauthorised", success: false });
+
+//   try {
+//     const response = await pool.query(`SELECT * FROM posts WHERE id=$1`, [
+//       postId,
+//     ]);
+//     const data = response.rows[0];
+//     return res.status(200).json({ data, success: true });
+//   } catch (error) {
+//     console.log(error);
+//     return res
+//       .status(500)
+//       .json({ message: "Internal Server Error", success: false });
+//   }
+// });
+
+router.get("/getPost", async (req, res) => {
+  const { postId } = req.query;
+  const user = req.session.user;
+
+  if (!postId)
+    return res.status(400).json({ message: "Bad request", success: false });
+  if (!user)
+    return res.status(401).json({ message: "Unauthorised", success: false });
+
+  try {
+    const query = `
+      WITH main_post AS (
+        SELECT 
+          p.*,
+          u.username,
+          u.full_name,
+          u.profile_picture,
+          u.type,
+          COUNT(DISTINCT c.comment_id) AS comment_count,
+          CASE
+            WHEN con.user_id IS NOT NULL THEN 'connected'
+            WHEN cr_sent.sender_id IS NOT NULL THEN 'pending'
+            WHEN cr_received.sender_id IS NOT NULL THEN 'incoming_request'
+            ELSE 'not_connected'
+          END AS connection_status
+        FROM posts p
+        JOIN users u ON p.owner = u.user_id
+        LEFT JOIN comments c ON c.post_id = p.id
+        LEFT JOIN connections con ON (con.user_id = $2 AND con.connection_id = p.owner)
+        LEFT JOIN connection_requests cr_sent 
+          ON (cr_sent.sender_id = $2 AND cr_sent.receiver_id = p.owner AND cr_sent.status = 'pending')
+        LEFT JOIN connection_requests cr_received 
+          ON (cr_received.sender_id = p.owner AND cr_received.receiver_id = $2 AND cr_received.status = 'pending')
+        WHERE p.id = $1
+        GROUP BY p.id, u.user_id, con.user_id, cr_sent.sender_id, cr_received.sender_id
+      ),
+      original_post AS (
+        SELECT 
+          p.*,
+          u.username AS orig_username,
+          u.full_name AS orig_full_name,
+          u.profile_picture AS orig_profile_picture,
+          u.type AS orig_type,
+          COUNT(DISTINCT c.comment_id) AS orig_comment_count
+        FROM main_post mp
+        LEFT JOIN posts p ON p.id = mp.repost_of
+        LEFT JOIN users u ON p.owner = u.user_id
+        LEFT JOIN comments c ON c.post_id = p.id
+        WHERE mp.repost_of IS NOT NULL
+        GROUP BY p.id, u.user_id
+      )
+      SELECT 
+        mp.*,
+        op.id AS original_id,
+        op.content AS original_content,
+        op.owner AS original_owner,
+        op.orig_username,
+        op.orig_full_name,
+        op.orig_profile_picture,
+        op.media_url AS original_media_url,
+        op.orig_comment_count,
+        op.created_at AS original_created_at
+      FROM main_post mp
+      LEFT JOIN original_post op ON mp.repost_of = op.id
+    `;
+
+    const response = await pool.query(query, [postId, user.user_id]);
+
+    if (response.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "Post not found", success: false });
+    }
+
+    let post = response.rows[0];
+    post.current_user = user.user_id;
+
+    // Build original_post object if it's a repost
+    if (post.repost_of && post.original_id) {
+      post.original_post = {
+        id: post.original_id,
+        content: post.original_content,
+        owner: post.original_owner,
+        username: post.orig_username,
+        full_name: post.orig_full_name,
+        profile_picture: post.orig_profile_picture,
+        media_url: post.original_media_url,
+        comment_count: post.orig_comment_count,
+        created_at: post.original_created_at,
+      };
+
+      // Clean up duplicate fields
+      delete post.original_id;
+      delete post.original_content;
+      delete post.original_owner;
+      delete post.orig_username;
+      delete post.orig_full_name;
+      delete post.orig_profile_picture;
+      delete post.original_media_url;
+      delete post.orig_comment_count;
+      delete post.original_created_at;
+    }
+
+    return res.status(200).json({ data: post, success: true });
+  } catch (error) {
+    console.error("Error fetching post:", error);
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", success: false });
   }
 });
 
