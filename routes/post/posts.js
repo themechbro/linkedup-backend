@@ -607,7 +607,9 @@ router.get("/getPost", async (req, res) => {
       delete post.original_created_at;
     }
 
-    return res.status(200).json({ data: post, success: true });
+    return res
+      .status(200)
+      .json({ data: post, success: true, request_by: user.user_id });
   } catch (error) {
     console.error("Error fetching post:", error);
     return res
