@@ -7,9 +7,10 @@ const connectPgSimple = require("connect-pg-simple");
 const session = require("express-session");
 const pool = require("./db");
 const path = require("path");
-
+const status = require("express-status-monitor");
 const PgSession = connectPgSimple(session);
 
+app.use(status());
 app.use(
   cors({
     origin: ["http://localhost:3000", "http://192.168.1.6:3000"], // your frontend URLs
@@ -57,9 +58,11 @@ const ConnectionRoutes = require("./routes/connections/request");
 const SuggestionConnectionRoute = require("./routes/connections/suggestions");
 const MessagingAllRoutes = require("./routes/messaging/message");
 const JobAllRoutes = require("./routes/jobs/job");
+const UpdateProfileSectionRoutes = require("./routes/profile/postRoutes");
 
 // const UploadRoute = require("./routes/uploads");
 // Mount Routes
+
 app.use(passport.initialize());
 app.use(passport.session());
 app.use("/", mainRoutes);
@@ -86,6 +89,9 @@ app.use("/api/messages", MessagingAllRoutes);
 app.use("/api/jobs", JobAllRoutes);
 
 // app.use("/api/upload", UploadRoute);
+
+// Profile Routes
+app.use("/api/profile/update", UpdateProfileSectionRoutes);
 
 app.listen(8000, "0.0.0.0", () => {
   console.log("Server is running on port 8000");
