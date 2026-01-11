@@ -59,6 +59,7 @@ const SuggestionConnectionRoute = require("./routes/connections/suggestions");
 const MessagingAllRoutes = require("./routes/messaging/message");
 const JobAllRoutes = require("./routes/jobs/job");
 const UpdateProfileSectionRoutes = require("./routes/profile/postRoutes");
+const FetchprofileSectionRoutes = require("./routes/profile/getterRoutes");
 
 // const UploadRoute = require("./routes/uploads");
 // Mount Routes
@@ -92,6 +93,7 @@ app.use("/api/jobs", JobAllRoutes);
 
 // Profile Routes
 app.use("/api/profile/update", UpdateProfileSectionRoutes);
+app.use("/api/profile/details/get/", FetchprofileSectionRoutes);
 
 app.listen(8000, "0.0.0.0", () => {
   console.log("Server is running on port 8000");

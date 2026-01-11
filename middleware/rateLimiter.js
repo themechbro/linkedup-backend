@@ -12,10 +12,21 @@ export const loginLimiter = rateLimit({
 });
 
 export const logoutLimitter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 15 minutes
+  windowMs: 5 * 60 * 1000, // 5 minutes
   max: 10,
   message: {
     message: "Too many logout requests. Please slow down.",
+    success: false,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+export const apiLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 5,
+  message: {
+    message: "Too many attempts. Please Slow down.",
     success: false,
   },
   standardHeaders: true,
