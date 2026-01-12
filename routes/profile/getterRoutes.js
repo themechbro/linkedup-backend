@@ -39,4 +39,41 @@ router.get("/fetch-about", async (req, res) => {
   }
 });
 
+// Fetch Education
+router.get("/fetch-education", async (req, res) => {
+  const user = req.session.user;
+  if (!user) {
+    return res
+      .status(401)
+      .json({ message: "Unauthorized Access", success: false });
+  }
+
+  const { profileId } = req.query;
+
+  if (!profileId) {
+    return res.status(400).json({ message: "Incomplete", success: false });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        SELECT * FROM education WHERE user_id=$1
+        `,
+      [profileId]
+    );
+
+    return res.status(200).json({
+      message: "Fetch success",
+      education: result.rows,
+      success: true,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Internal Server Error",
+      success: false,
+    });
+  }
+});
+
 module.exports = router;
