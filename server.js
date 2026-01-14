@@ -7,10 +7,8 @@ const connectPgSimple = require("connect-pg-simple");
 const session = require("express-session");
 const pool = require("./db");
 const path = require("path");
-const status = require("express-status-monitor");
 const PgSession = connectPgSimple(session);
 
-app.use(status());
 app.use(
   cors({
     origin: ["http://localhost:3000", "http://192.168.1.6:3000"], // your frontend URLs

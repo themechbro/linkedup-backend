@@ -1,7 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
+const axios = require("axios");
 const { apiLimiter } = require("../../middleware/rateLimiter");
+const { signInternalJwt } = require("../../utils/internalJwt");
 
 // Education
 router.post("/post-education", apiLimiter, async (req, res) => {
@@ -120,6 +122,66 @@ router.post("/post-about", apiLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error(error);
+    return res.status(500).json({
+      message: "Internal Server Error",
+      success: false,
+    });
+  }
+});
+
+// Industry through Microservice
+router.post("/post-industry", apiLimiter, async (req, res) => {
+  const user = req.session.user;
+  if (!user) {
+    return res
+      .status(401)
+      .json({ message: "Unauthorized Access", success: false });
+  }
+  const token = signInternalJwt(user);
+  try {
+    const response = await axios.post(
+      `${process.env.SPRING_MICROSERVICE}/api/profile/update-industry/${user.user_id}`,
+      req.body,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      message: "Internal Server Error",
+      success: false,
+    });
+  }
+});
+
+// Website Through Microservice
+router.post("/post-website", apiLimiter, async (req, res) => {
+  const user = req.session.user;
+  if (!user) {
+    return res
+      .status(401)
+      .json({ message: "Unauthorized Access", success: false });
+  }
+  const token = signInternalJwt(user);
+  try {
+    const response = await axios.post(
+      `${process.env.SPRING_MICROSERVICE}/api/profile/update-website/${user.user_id}`,
+      req.body,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.log(error);
     return res.status(500).json({
       message: "Internal Server Error",
       success: false,
