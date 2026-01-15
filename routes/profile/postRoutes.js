@@ -94,34 +94,55 @@ router.post("/post-about", apiLimiter, async (req, res) => {
       .status(401)
       .json({ message: "Unauthorized Access", success: false });
   }
-  const { about } = req.body;
-  const { user_id } = user;
+  // const { about } = req.body;
+  // const { user_id } = user;
 
-  if (typeof about !== "string" || !about.trim()) {
-    return res.status(400).json({
-      message: "About section is required",
-      success: false,
-    });
-  }
+  // if (typeof about !== "string" || !about.trim()) {
+  //   return res.status(400).json({
+  //     message: "About section is required",
+  //     success: false,
+  //   });
+  // }
+
+  // try {
+  //   const result = await pool.query(
+  //     `
+  //     UPDATE users
+  //     SET about=$1
+  //     WHERE user_id=$2
+  //     RETURNING user_id, about
+  //     `,
+  //     [about.trim(), user_id]
+  //   );
+
+  //   return res.status(201).json({
+  //     message: "About successfully added",
+  //     success: true,
+  //     about: result.rows[0],
+  //   });
+  // } catch (error) {
+  //   console.error(error);
+  //   return res.status(500).json({
+  //     message: "Internal Server Error",
+  //     success: false,
+  //   });
+  // }
+
+  const token = signInternalJwt(user);
 
   try {
-    const result = await pool.query(
-      `
-      UPDATE users
-      SET about=$1
-      WHERE user_id=$2
-      RETURNING user_id, about   
-      `,
-      [about.trim(), user_id]
+    const response = await axios.post(
+      `${process.env.SPRING_MICROSERVICE}/api/profile/update-about/${user.user_id}`,
+      req.body,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
     );
-
-    return res.status(201).json({
-      message: "About successfully added",
-      success: true,
-      about: result.rows[0],
-    });
+    res.json(response.data);
   } catch (error) {
-    console.error(error);
+    console.log(error);
     return res.status(500).json({
       message: "Internal Server Error",
       success: false,
@@ -171,6 +192,36 @@ router.post("/post-website", apiLimiter, async (req, res) => {
   try {
     const response = await axios.post(
       `${process.env.SPRING_MICROSERVICE}/api/profile/update-website/${user.user_id}`,
+      req.body,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      message: "Internal Server Error",
+      success: false,
+    });
+  }
+});
+
+// Company Size and HQ through Microservice
+router.post("/post-company-hq", apiLimiter, async (req, res) => {
+  const user = req.session.user;
+  if (!user) {
+    return res
+      .status(401)
+      .json({ message: "Unauthorized Access", success: false });
+  }
+  const token = signInternalJwt(user);
+  try {
+    const response = await axios.post(
+      `${process.env.SPRING_MICROSERVICE}/api/profile/update-companyhq/${user.user_id}`,
       req.body,
       {
         headers: {
