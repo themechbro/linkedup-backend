@@ -113,9 +113,11 @@ router.post("/send_new_message", async (req, res) => {
        RETURNING *`,
       [currentUser.user_id, receiver_id, content.trim()]
     );
-
+    const message = result.rows[0];
+    const io = req.app.get("io");
+    io.to(receiver_id).emit("new message", message);
     return res.status(200).json({
-      message: result.rows[0],
+      message,
       success: true,
     });
   } catch (err) {

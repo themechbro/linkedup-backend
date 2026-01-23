@@ -3,7 +3,7 @@ const router = express.Router();
 const pool = require("../../db");
 const upload = require("../../middleware/upload");
 const { v4: uuidv4 } = require("uuid");
-
+const isAuthenticated = require("../../middleware/sessionChecker");
 // Create Post
 router.post("/", upload.array("media", 10), async (req, res) => {
   try {
@@ -28,7 +28,7 @@ router.post("/", upload.array("media", 10), async (req, res) => {
       `INSERT INTO posts (content, media_url, likes, status, owner, created_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
        RETURNING *`,
-      [content, JSON.stringify(media), 0, "created", owner]
+      [content, JSON.stringify(media), 0, "created", owner],
     );
 
     res.status(201).json({
@@ -40,137 +40,6 @@ router.post("/", upload.array("media", 10), async (req, res) => {
     res.status(500).json({ message: "Internal Server Error" });
   }
 });
-
-// router.get("/", async (req, res) => {
-//   try {
-//     const currentUser = req.session.user;
-
-//     if (!currentUser) {
-//       return res.status(401).json({ message: "Unauthorized" });
-//     }
-
-//     // pagination parameters
-//     const limit = parseInt(req.query.limit) || 10;
-//     const offset = parseInt(req.query.offset) || 0;
-
-//     const result = await pool.query(
-//       `
-//       SELECT
-//         p.*,
-//         u.username,
-//         u.full_name,
-//         u.type,
-//         u.profile_picture,
-//         COUNT(c.comment_id) AS comment_count
-//       FROM posts p
-//       JOIN users u ON p.owner = u.user_id
-//       LEFT JOIN comments c ON c.post_id = p.id
-//       GROUP BY p.id, u.user_id
-//       ORDER BY p.created_at DESC
-//       LIMIT $1 OFFSET $2;
-//       `,
-//       [limit, offset]
-//     );
-
-//     // mark likes
-//     const posts = result.rows.map((post) => ({
-//       ...post,
-//       liked_by_me: post.liked_by?.includes(currentUser.user_id) || false,
-//       current_user: currentUser.user_id,
-//     }));
-
-//     res.json(posts);
-//   } catch (err) {
-//     console.error("Error fetching posts:", err);
-//     res.status(500).json({ message: "Internal server error" });
-//   }
-// });
-
-// router.get("/", async (req, res) => {
-//   try {
-//     const currentUser = req.session.user;
-
-//     if (!currentUser) {
-//       return res.status(401).json({ message: "Unauthorized" });
-//     }
-
-//     const limit = parseInt(req.query.limit) || 10;
-//     const offset = parseInt(req.query.offset) || 0;
-
-//     // -----------------------------
-//     // 1) Fetch main posts as usual
-//     // -----------------------------
-//     const result = await pool.query(
-//       `
-//       SELECT
-//         p.*,
-//         u.username,
-//         u.full_name,
-//         u.type,
-//         u.profile_picture,
-//         COUNT(c.comment_id) AS comment_count
-//         cr.status AS request_status,
-//         cr.sender_id,
-//         cr.receiver_id,
-//         con.user_id AS connected_user
-// FROM posts p
-//       JOIN users u ON p.owner = u.user_id
-//       LEFT JOIN comments c ON c.post_id = p.id
-// LEFT JOIN connection_requests cr
-//   ON (cr.sender_id = $3 AND cr.receiver_id = p.owner)
-//   OR (cr.sender_id = p.owner AND cr.receiver_id = $3)
-// LEFT JOIN connections con
-//   ON (con.user_id = $3 AND con.connection_id = p.owner)
-//       GROUP BY p.id, u.user_id
-//       ORDER BY p.created_at DESC
-//       LIMIT $1 OFFSET $2;
-//       `,
-//       [limit, offset]
-//     );
-
-//     const posts = [];
-
-//     // -----------------------------
-//     // 2) Loop through posts & attach original post if it's a repost
-//     // -----------------------------
-//     for (let post of result.rows) {
-//       let enriched = {
-//         ...post,
-//         liked_by_me: post.liked_by?.includes(currentUser.user_id) || false,
-//         current_user: currentUser.user_id,
-//       };
-
-//       if (post.repost_of) {
-//         // Fetch the original post with user details
-//         const original = await pool.query(
-//           `
-//           SELECT
-//             p.*,
-//             u.username,
-//             u.full_name,
-//             u.type,
-//             u.profile_picture
-//           FROM posts p
-//           JOIN users u ON p.owner = u.user_id
-//           WHERE p.id = $1
-//           LIMIT 1;
-//           `,
-//           [post.repost_of]
-//         );
-
-//         enriched.original_post =
-//           original.rowCount > 0 ? original.rows[0] : null;
-//       }
-
-//       posts.push(enriched);
-//     }
-
-//     return res.json(posts);
-//   } catch (err) {
-//     console.error("Error fetching posts:", err);
-//     res.status(500).json({ message: "Internal server error" });
-//   }
-// });
 
 router.get("/", async (req, res) => {
   try {
@@ -228,7 +97,7 @@ router.get("/", async (req, res) => {
   ORDER BY p.created_at DESC
   LIMIT $1 OFFSET $2
   `,
-      [limit, offset, currentUser.user_id]
+      [limit, offset, currentUser.user_id],
     );
 
     //------------------------------------------------------------
@@ -272,7 +141,7 @@ router.get("/", async (req, res) => {
           WHERE p.id = $1
           LIMIT 1
           `,
-          [post.repost_of]
+          [post.repost_of],
         );
 
         enriched.original_post =
@@ -314,7 +183,7 @@ router.get("/likelist", async (req, res) => {
       JOIN users u ON u.user_id = liked_user_id
       WHERE p.id = $1;
       `,
-      [post_id]
+      [post_id],
     );
 
     // Add liked_by_me field
@@ -395,7 +264,7 @@ router.put(
         `UPDATE posts 
          SET content=$1, media_url=$2 , status=$3
          WHERE id=$4`,
-        [content, JSON.stringify(finalMedia), status, post_id]
+        [content, JSON.stringify(finalMedia), status, post_id],
       );
 
       return res.json({
@@ -407,7 +276,7 @@ router.put(
       console.error("Error editing post:", err);
       res.status(500).json({ message: "Internal server error" });
     }
-  }
+  },
 );
 
 // Repost route
@@ -435,7 +304,7 @@ router.post("/:postId/repost", async (req, res) => {
     // 2. Check if already reposted by this user
     const exists = await pool.query(
       "SELECT 1 FROM posts WHERE owner = $1 AND repost_of = $2 LIMIT 1",
-      [userId, postId]
+      [userId, postId],
     );
 
     if (exists.rowCount > 0) {
@@ -461,13 +330,13 @@ router.post("/:postId/repost", async (req, res) => {
         "reposted",
         postId,
         0,
-      ]
+      ],
     );
 
     // 4. Increment repost_count on original post
     await pool.query(
       "UPDATE posts SET repost_count = repost_count + 1 WHERE id = $1",
-      [postId]
+      [postId],
     );
 
     return res.json({
@@ -615,6 +484,77 @@ router.get("/getPost", async (req, res) => {
     return res
       .status(500)
       .json({ message: "Internal Server Error", success: false });
+  }
+});
+
+// Post of connections
+// router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
+//   const user = req.currentUser;
+
+//   const connections = await pool.query(
+//     `SELECT connection_id FROM connections WHERE user_id=$1`,
+//     [user.user_id],
+//   );
+//   const connResponse = connections.rows;
+
+//   if (!connResponse) {
+//     res.status(500).json({ success: false, user });
+//   }
+
+//   res.status(200).json({ success: true, connResponse });
+// });
+
+router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
+  try {
+    const userId = req.currentUser.user_id;
+
+    // 1. Fetch connection IDs
+    const result = await pool.query(
+      `SELECT connection_id FROM connections WHERE user_id = $1`,
+      [userId],
+    );
+
+    const connectionIds = result.rows.map((row) => row.connection_id);
+
+    if (connectionIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        feed: {},
+      });
+    }
+
+    // 2. Call Java Feed microservice
+    const feedResponse = await fetch(
+      `${process.env.SPRING_MICROSERVICE}/api/feed`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+
+          // Optional: internal auth between services
+          // "Authorization": `Bearer ${req.internalJwt}`
+        },
+        body: JSON.stringify(connectionIds),
+      },
+    );
+
+    if (!feedResponse.ok) {
+      throw new Error("Feed service failed");
+    }
+
+    const feedData = await feedResponse.json();
+
+    // 3. Send feed to frontend
+    return res.status(200).json({
+      success: true,
+      feed: feedData,
+    });
+  } catch (err) {
+    console.error("Feed error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch feed",
+    });
   }
 });
 

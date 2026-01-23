@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
+const isAuthenticated = require("../../middleware/sessionChecker");
 
 // Fetch About
 router.get("/fetch-about", async (req, res) => {
@@ -22,7 +23,7 @@ router.get("/fetch-about", async (req, res) => {
       `
         SELECT about FROM users WHERE user_id=$1
         `,
-      [profileId]
+      [profileId],
     );
 
     return res.status(200).json({
@@ -59,7 +60,7 @@ router.get("/fetch-education", async (req, res) => {
       `
         SELECT * FROM education WHERE user_id=$1
         `,
-      [profileId]
+      [profileId],
     );
 
     return res.status(200).json({
@@ -102,7 +103,7 @@ router.get("/fetch-about-brands", async (req, res) => {
       FROM users
       WHERE user_id = $1
       `,
-      [profileId]
+      [profileId],
     );
 
     if (result.rowCount === 0) {
@@ -130,6 +131,36 @@ router.get("/fetch-about-brands", async (req, res) => {
     console.error("fetch-about-brands error:", error);
     return res.status(500).json({
       message: "Internal server error",
+      success: false,
+    });
+  }
+});
+
+// fetch posts for brands
+router.get("/fetch-posts-brands", isAuthenticated, async (req, res) => {
+  const limit = parseInt(req.query.limit) || 10;
+  const offset = parseInt(req.query.offset) || 0;
+  const profileId = req.query.profileId;
+
+  try {
+    const response = await pool.query(
+      `SELECT *
+       FROM posts
+       WHERE owner = $1
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [profileId, limit, offset],
+    );
+
+    return res.status(200).json({
+      posts: response.rows,
+      hasMore: response.rows.length === limit, // 🔥 key for infinite scroll
+      success: true,
+    });
+  } catch (error) {
+    console.log("fetch-posts-brands error:", error);
+    return res.status(500).json({
+      message: "Internal Server Error",
       success: false,
     });
   }
