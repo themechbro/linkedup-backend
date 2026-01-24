@@ -282,7 +282,7 @@ router.put(
 // Repost route
 router.post("/:postId/repost", async (req, res) => {
   const { postId } = req.params;
-  const { userId } = req.body;
+  const userId = req.session.user.user_id;
 
   if (!userId) {
     return res.status(400).json({ success: false, message: "userId required" });
@@ -504,9 +504,127 @@ router.get("/getPost", async (req, res) => {
 //   res.status(200).json({ success: true, connResponse });
 // });
 
+// router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
+//   try {
+//     const userId = req.currentUser.user_id;
+
+//     // 1. Fetch connection IDs
+//     const result = await pool.query(
+//       `SELECT connection_id FROM connections WHERE user_id = $1`,
+//       [userId],
+//     );
+
+//     const connectionIds = result.rows.map((row) => row.connection_id);
+
+//     if (connectionIds.length === 0) {
+//       return res.status(200).json({
+//         success: true,
+//         feed: {},
+//       });
+//     }
+
+//     // 2. Call Java Feed microservice
+//     const feedResponse = await fetch(
+//       `${process.env.SPRING_MICROSERVICE}/api/feed`,
+//       {
+//         method: "POST",
+//         headers: {
+//           "Content-Type": "application/json",
+
+//           // Optional: internal auth between services
+//           // "Authorization": `Bearer ${req.internalJwt}`
+//         },
+//         body: JSON.stringify(connectionIds),
+//       },
+//     );
+
+//     if (!feedResponse.ok) {
+//       throw new Error("Feed service failed");
+//     }
+
+//     const feedData = await feedResponse.json();
+
+//     // 3. Send feed to frontend
+//     return res.status(200).json({
+//       success: true,
+//       feed: feedData,
+//     });
+//   } catch (err) {
+//     console.error("Feed error:", err);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Unable to fetch feed",
+//     });
+//   }
+// });
+
+// router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
+//   try {
+//     const userId = req.currentUser.user_id;
+
+//     // ✅ Pagination params (same semantics as before)
+//     const limit = parseInt(req.query.limit, 10) || 10;
+//     const offset = parseInt(req.query.offset, 10) || 0;
+
+//     // 1. Fetch connection IDs
+//     const result = await pool.query(
+//       `SELECT connection_id FROM connections WHERE user_id = $1`,
+//       [userId],
+//     );
+
+//     const connectionIds = result.rows.map((row) => row.connection_id);
+
+//     if (connectionIds.length === 0) {
+//       return res.status(200).json({
+//         success: true,
+//         feed: [],
+//         limit,
+//         offset,
+//       });
+//     }
+
+//     // 2. Call Java Feed microservice (FORWARD pagination)
+//     const feedResponse = await fetch(
+//       `${process.env.SPRING_MICROSERVICE}/api/feed?limit=${limit}&offset=${offset}`,
+//       {
+//         method: "POST",
+//         headers: {
+//           "Content-Type": "application/json",
+//           // Optional internal auth
+//           // "Authorization": `Bearer ${req.internalJwt}`
+//         },
+//         body: JSON.stringify(connectionIds),
+//       },
+//     );
+
+//     if (!feedResponse.ok) {
+//       throw new Error("Feed service failed");
+//     }
+
+//     const feedData = await feedResponse.json();
+
+//     // 3. Send feed to frontend
+//     return res.status(200).json({
+//       success: true,
+//       feed: feedData,
+//       limit,
+//       offset,
+//     });
+//   } catch (err) {
+//     console.error("Feed error:", err);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Unable to fetch feed",
+//     });
+//   }
+// });
+
 router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
   try {
     const userId = req.currentUser.user_id;
+
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const offset = parseInt(req.query.offset, 10) || 0;
 
     // 1. Fetch connection IDs
     const result = await pool.query(
@@ -519,21 +637,18 @@ router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
     if (connectionIds.length === 0) {
       return res.status(200).json({
         success: true,
-        feed: {},
+        feed: [],
+        limit,
+        offset,
       });
     }
 
     // 2. Call Java Feed microservice
     const feedResponse = await fetch(
-      `${process.env.SPRING_MICROSERVICE}/api/feed`,
+      `${process.env.SPRING_MICROSERVICE}/api/feed?limit=${limit}&offset=${offset}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-
-          // Optional: internal auth between services
-          // "Authorization": `Bearer ${req.internalJwt}`
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(connectionIds),
       },
     );
@@ -542,12 +657,101 @@ router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
       throw new Error("Feed service failed");
     }
 
-    const feedData = await feedResponse.json();
+    const feed = await feedResponse.json(); // List<FeedPostDto>
 
-    // 3. Send feed to frontend
+    // -----------------------------------------
+    // ⭐ NODE-SIDE USER ENRICHMENT (FIXED)
+    // -----------------------------------------
+
+    // 3. Collect ALL user IDs (reposter + original author)
+    const userIdSet = new Set();
+
+    feed.forEach((post) => {
+      if (post.owner) userIdSet.add(post.owner);
+
+      if (post.repostedPost?.owner) {
+        userIdSet.add(post.repostedPost.owner);
+      }
+    });
+
+    const userIds = Array.from(userIdSet);
+
+    // 4. Fetch user details in ONE query
+    const usersResult = await pool.query(
+      `
+      SELECT user_id, username, full_name, type, profile_picture
+      FROM users
+      WHERE user_id = ANY($1)
+      `,
+      [userIds],
+    );
+
+    // 5. Build lookup map
+    const userMap = Object.fromEntries(
+      usersResult.rows.map((user) => [user.user_id, user]),
+    );
+
+    // 6. Enrich feed
+    const enrichedFeed = feed.map((post) => {
+      const reposter = userMap[post.owner];
+
+      // 🔁 REPOST
+      if (post.repostOf && post.repostedPost) {
+        const originalAuthor = userMap[post.repostedPost.owner];
+
+        return {
+          ...post,
+
+          // feed-level (reposter)
+          username: reposter?.username || "",
+          full_name: reposter?.full_name || "",
+          type: reposter?.type || "normal",
+          profile_picture: reposter?.profile_picture || null,
+
+          // original post enrichment
+          repostedPost: {
+            ...post.repostedPost,
+            media_url: post.repostedPost.mediaUrl
+              ? JSON.parse(post.repostedPost.mediaUrl)
+              : [],
+            username: originalAuthor?.username || "",
+            full_name: originalAuthor?.full_name || "",
+            type: originalAuthor?.type || "normal",
+            profile_picture: originalAuthor?.profile_picture || null,
+            liked_by_me: post.repostedPost.likedBy?.includes(userId) || false,
+          },
+
+          liked_by: post.likedBy || [],
+          liked_by_me: false,
+          current_user: userId,
+          connection_status: "connected",
+        };
+      }
+
+      // 🟢 NORMAL POST
+      return {
+        ...post,
+
+        media_url: post.mediaUrl ? JSON.parse(post.mediaUrl) : [],
+
+        username: reposter?.username || "",
+        full_name: reposter?.full_name || "",
+        type: reposter?.type || "normal",
+        profile_picture: reposter?.profile_picture || null,
+
+        liked_by: post.likedBy || [],
+        liked_by_me: post.likedBy?.includes(userId) || false,
+        current_user: userId,
+        connection_status: "connected",
+      };
+    });
+
+    // 7. Send enriched feed
     return res.status(200).json({
       success: true,
-      feed: feedData,
+      feed: enrichedFeed,
+      limit,
+      offset,
     });
   } catch (err) {
     console.error("Feed error:", err);
