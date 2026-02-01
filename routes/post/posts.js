@@ -4,6 +4,7 @@ const pool = require("../../db");
 const upload = require("../../middleware/upload");
 const { v4: uuidv4 } = require("uuid");
 const isAuthenticated = require("../../middleware/sessionChecker");
+
 // Create Post
 router.post("/", upload.array("media", 10), async (req, res) => {
   try {
@@ -488,144 +489,11 @@ router.get("/getPost", async (req, res) => {
 });
 
 // Post of connections
-// router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
-//   const user = req.currentUser;
-
-//   const connections = await pool.query(
-//     `SELECT connection_id FROM connections WHERE user_id=$1`,
-//     [user.user_id],
-//   );
-//   const connResponse = connections.rows;
-
-//   if (!connResponse) {
-//     res.status(500).json({ success: false, user });
-//   }
-
-//   res.status(200).json({ success: true, connResponse });
-// });
-
-// router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
-//   try {
-//     const userId = req.currentUser.user_id;
-
-//     // 1. Fetch connection IDs
-//     const result = await pool.query(
-//       `SELECT connection_id FROM connections WHERE user_id = $1`,
-//       [userId],
-//     );
-
-//     const connectionIds = result.rows.map((row) => row.connection_id);
-
-//     if (connectionIds.length === 0) {
-//       return res.status(200).json({
-//         success: true,
-//         feed: {},
-//       });
-//     }
-
-//     // 2. Call Java Feed microservice
-//     const feedResponse = await fetch(
-//       `${process.env.SPRING_MICROSERVICE}/api/feed`,
-//       {
-//         method: "POST",
-//         headers: {
-//           "Content-Type": "application/json",
-
-//           // Optional: internal auth between services
-//           // "Authorization": `Bearer ${req.internalJwt}`
-//         },
-//         body: JSON.stringify(connectionIds),
-//       },
-//     );
-
-//     if (!feedResponse.ok) {
-//       throw new Error("Feed service failed");
-//     }
-
-//     const feedData = await feedResponse.json();
-
-//     // 3. Send feed to frontend
-//     return res.status(200).json({
-//       success: true,
-//       feed: feedData,
-//     });
-//   } catch (err) {
-//     console.error("Feed error:", err);
-//     return res.status(500).json({
-//       success: false,
-//       message: "Unable to fetch feed",
-//     });
-//   }
-// });
-
-// router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
-//   try {
-//     const userId = req.currentUser.user_id;
-
-//     // ✅ Pagination params (same semantics as before)
-//     const limit = parseInt(req.query.limit, 10) || 10;
-//     const offset = parseInt(req.query.offset, 10) || 0;
-
-//     // 1. Fetch connection IDs
-//     const result = await pool.query(
-//       `SELECT connection_id FROM connections WHERE user_id = $1`,
-//       [userId],
-//     );
-
-//     const connectionIds = result.rows.map((row) => row.connection_id);
-
-//     if (connectionIds.length === 0) {
-//       return res.status(200).json({
-//         success: true,
-//         feed: [],
-//         limit,
-//         offset,
-//       });
-//     }
-
-//     // 2. Call Java Feed microservice (FORWARD pagination)
-//     const feedResponse = await fetch(
-//       `${process.env.SPRING_MICROSERVICE}/api/feed?limit=${limit}&offset=${offset}`,
-//       {
-//         method: "POST",
-//         headers: {
-//           "Content-Type": "application/json",
-//           // Optional internal auth
-//           // "Authorization": `Bearer ${req.internalJwt}`
-//         },
-//         body: JSON.stringify(connectionIds),
-//       },
-//     );
-
-//     if (!feedResponse.ok) {
-//       throw new Error("Feed service failed");
-//     }
-
-//     const feedData = await feedResponse.json();
-
-//     // 3. Send feed to frontend
-//     return res.status(200).json({
-//       success: true,
-//       feed: feedData,
-//       limit,
-//       offset,
-//     });
-//   } catch (err) {
-//     console.error("Feed error:", err);
-//     return res.status(500).json({
-//       success: false,
-//       message: "Unable to fetch feed",
-//     });
-//   }
-// });
-
 router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
   try {
     const userId = req.currentUser.user_id;
-
     const limit = parseInt(req.query.limit, 10) || 10;
     const offset = parseInt(req.query.offset, 10) || 0;
-
     // 1. Fetch connection IDs
     const result = await pool.query(
       `SELECT connection_id FROM connections WHERE user_id = $1`,
@@ -745,7 +613,6 @@ router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
         connection_status: "connected",
       };
     });
-
     // 7. Send enriched feed
     return res.status(200).json({
       success: true,
@@ -760,6 +627,29 @@ router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
       message: "Unable to fetch feed",
     });
   }
+});
+
+router.get("/checkLatestConnectionPost", isAuthenticated, async (req, res) => {
+  const userId = req.currentUser.user_id;
+
+  const result = await pool.query(
+    `SELECT connection_id FROM connections WHERE user_id = $1`,
+    [userId],
+  );
+
+  const connectionIds = result.rows.map((r) => r.connection_id);
+
+  const latest = await fetch(
+    `${process.env.SPRING_MICROSERVICE}/api/feed/latest`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(connectionIds),
+    },
+  );
+
+  const latestPostId = await latest.json();
+  res.json({ latestPostId });
 });
 
 module.exports = router;
