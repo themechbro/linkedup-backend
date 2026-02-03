@@ -96,7 +96,7 @@ router.post("/send_new_message", async (req, res) => {
     const connectionCheck = await pool.query(
       `SELECT * FROM connections
        WHERE user_id = $1 AND connection_id = $2`,
-      [currentUser.user_id, receiver_id]
+      [currentUser.user_id, receiver_id],
     );
 
     if (connectionCheck.rows.length === 0) {
@@ -111,11 +111,23 @@ router.post("/send_new_message", async (req, res) => {
       `INSERT INTO messages (sender_id, receiver_id, content)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [currentUser.user_id, receiver_id, content.trim()]
+      [currentUser.user_id, receiver_id, content.trim()],
     );
     const message = result.rows[0];
     const io = req.app.get("io");
-    io.to(receiver_id).emit("new message", message);
+    // io.to(receiver_id).emit("new message", message);
+
+    const unread = await pool.query(
+      `SELECT COUNT(*) as unread_count
+   FROM messages
+   WHERE receiver_id = $1 AND read = FALSE`,
+      [receiver_id],
+    );
+
+    io.to(receiver_id).emit("unread_count_update", {
+      unread: parseInt(unread.rows[0].unread_count),
+    });
+
     return res.status(200).json({
       message,
       success: true,
@@ -145,7 +157,7 @@ router.get("/get-coversation-specific/:userId", async (req, res) => {
     const connectionCheck = await pool.query(
       `SELECT * FROM connections 
        WHERE user_id = $1 AND connection_id = $2`,
-      [currentUser.user_id, userId]
+      [currentUser.user_id, userId],
     );
 
     if (connectionCheck.rows.length === 0) {
@@ -183,8 +195,22 @@ router.get("/get-coversation-specific/:userId", async (req, res) => {
       `UPDATE messages 
        SET read = TRUE 
        WHERE receiver_id = $1 AND sender_id = $2 AND read = FALSE`,
-      [currentUser.user_id, userId]
+      [currentUser.user_id, userId],
     );
+
+    // Emiting to front about unreads ------
+    const io = req.app.get("io");
+    const unread = await pool.query(
+      `SELECT COUNT(*) as unread_count
+   FROM messages
+   WHERE receiver_id = $1 AND read = FALSE`,
+      [currentUser.user_id],
+    );
+
+    io.to(currentUser.user_id).emit("unread_count_update", {
+      unread: parseInt(unread.rows[0].unread_count),
+    });
+    // ---------
 
     return res.status(200).json({
       success: true,
@@ -213,8 +239,22 @@ router.post("/mark_as_read", async (req, res) => {
       `UPDATE messages 
        SET read = TRUE 
        WHERE receiver_id = $1 AND sender_id = $2 AND read = FALSE`,
-      [currentUser.user_id, sender_id]
+      [currentUser.user_id, sender_id],
     );
+
+    // Emiting to front about unread ------
+    const io = req.app.get("io");
+    const unread = await pool.query(
+      `SELECT COUNT(*) as unread_count
+   FROM messages
+   WHERE receiver_id = $1 AND read = FALSE`,
+      [currentUser.user_id],
+    );
+
+    io.to(currentUser.user_id).emit("unread_count_update", {
+      unread: parseInt(unread.rows[0].unread_count),
+    });
+    // ---------
 
     return res.status(200).json({ success: true });
   } catch (err) {
@@ -238,7 +278,7 @@ router.get("/unread_chat_count", async (req, res) => {
       `SELECT COUNT(*) as unread_count
        FROM messages
        WHERE receiver_id = $1 AND read = FALSE`,
-      [currentUser.user_id]
+      [currentUser.user_id],
     );
 
     return res.status(200).json({
@@ -264,7 +304,7 @@ router.post("/like_a_message", async (req, res) => {
   try {
     const checkLikedAlready = await pool.query(
       `SELECT liked_by FROM messages WHERE message_id=$1`,
-      [msg_id]
+      [msg_id],
     );
     if (checkLikedAlready.rows.length === 0) {
       return res.status(404).json({ message: "Message not found" });
@@ -286,7 +326,7 @@ router.post("/like_a_message", async (req, res) => {
 
     await pool.query(
       `UPDATE messages SET liked_by=$1, likes=$2 WHERE message_id=$3`,
-      [newLikedBy, updatedLikes, msg_id]
+      [newLikedBy, updatedLikes, msg_id],
     );
 
     res.status(200).json({

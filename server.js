@@ -33,7 +33,7 @@ app.use(
   cors({
     origin: ["http://localhost:3000", "http://192.168.1.6:3000"], // your frontend URLs
     credentials: true, // ✅ allow cookies
-  })
+  }),
 );
 
 app.use(sessionMiddleware);
@@ -60,6 +60,7 @@ app.use(sessionMiddleware);
 app.use(express.json()); // Body parser for JSON
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/api/video", require("./routes/post/videoStream"));
 
 // io set
 app.set("io", io);

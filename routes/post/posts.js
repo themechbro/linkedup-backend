@@ -647,13 +647,25 @@ router.post("/", upload.array("media", 10), async (req, res) => {
     const { content } = req.body;
     const owner = req.session.user.user_id;
 
+    // const media = req.files.map((file) => {
+    //   const isVideo = file.mimetype.startsWith("video");
+    //   const type = isVideo ? "videos" : "images";
+
+    //   return {
+    //     url: `/uploads/${type}/${file.filename}`,
+    //     type,
+    //   };
+    // });
+
+    // -----Chunked video logic
     const media = req.files.map((file) => {
       const isVideo = file.mimetype.startsWith("video");
-      const type = isVideo ? "videos" : "images";
 
       return {
-        url: `/uploads/${type}/${file.filename}`,
-        type,
+        url: isVideo
+          ? `/api/video/${file.filename}` // ✅ videos go through stream route
+          : `/uploads/images/${file.filename}`, // images remain static
+        type: isVideo ? "videos" : "images",
       };
     });
 
@@ -902,6 +914,77 @@ router.put(
   },
 );
 
+// Repost route
+router.post("/:postId/repost", async (req, res) => {
+  const { postId } = req.params;
+  const userId = req.session.user.user_id;
+
+  if (!userId) {
+    return res.status(400).json({ success: false, message: "userId required" });
+  }
+
+  try {
+    // 1. Fetch original post
+    const original = await pool.query("SELECT * FROM posts WHERE id = $1", [
+      postId,
+    ]);
+
+    if (original.rowCount === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Post not found" });
+    }
+    const originalPost = original.rows[0];
+
+    // 2. Check if already reposted by this user
+    const exists = await pool.query(
+      "SELECT 1 FROM posts WHERE owner = $1 AND repost_of = $2 LIMIT 1",
+      [userId, postId],
+    );
+
+    if (exists.rowCount > 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Already reposted" });
+    }
+
+    // 3. Create a new repost entry
+    const repostId = uuidv4();
+
+    await pool.query(
+      `INSERT INTO posts (
+        id, owner, content, media_url, likes, liked_by, status, repost_of, repost_count, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())`,
+      [
+        repostId,
+        userId,
+        null,
+        null,
+        0,
+        [], // liked_by
+        "reposted",
+        postId,
+        0,
+      ],
+    );
+
+    // 4. Increment repost_count on original post
+    await pool.query(
+      "UPDATE posts SET repost_count = repost_count + 1 WHERE id = $1",
+      [postId],
+    );
+
+    return res.json({
+      success: true,
+      message: "Reposted successfully",
+      repost_id: repostId,
+    });
+  } catch (err) {
+    console.error("Repost Error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 router.delete("/delete/:post_id", async (req, res) => {
   try {
     const currentUser = req.session.user;
@@ -943,9 +1026,9 @@ router.delete("/delete/:post_id", async (req, res) => {
   }
 });
 
-router.get("/getPost/:postId", async (req, res) => {
+router.get("/getPost", async (req, res) => {
   try {
-    const { postId } = req.params;
+    const { postId } = req.query;
     const user = req.session.user;
 
     if (!user) {
@@ -1076,8 +1159,11 @@ router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
       [userId],
     );
 
-    const connectionIds = result.rows.map((row) => row.connection_id);
-
+    // const connectionIds = result.rows.map((row) => row.connection_id);
+    const connectionIds = [
+      userId, // 👈 include self posts
+      ...result.rows.map((row) => row.connection_id),
+    ];
     if (connectionIds.length === 0) {
       const emptyResponse = {
         success: true,
@@ -1195,6 +1281,7 @@ router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
       feed: enrichedFeed,
       limit,
       offset,
+      currentUser: userId,
     };
 
     // Cache the result
@@ -1260,7 +1347,10 @@ router.get("/checkLatestConnectionPost", isAuthenticated, async (req, res) => {
       },
     );
 
-    const latestPostId = await latest.json();
+    // const latestPostId = await latest.json();
+
+    const latestResponse = await latest.json();
+    const latestPostId = latestResponse.postId;
 
     // ✅ NEW: Check last seen post from Redis
     const lastSeenKey = `user:${userId}:lastSeenPost`;
