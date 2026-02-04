@@ -6,6 +6,45 @@ const { v4: uuidv4 } = require("uuid");
 const isAuthenticated = require("../../middleware/sessionChecker");
 const redis = require("../../redis/redisClient");
 const feedCache = require("../../redis/feedCacheManager");
+const { exec } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+function convertToHLS(filename) {
+  const inputPath = path.join(
+    __dirname,
+    "..",
+    "..",
+    "uploads",
+    "videos",
+    filename,
+  );
+
+  const outputDir = path.join(
+    __dirname,
+    "..",
+    "..",
+    "uploads",
+    "hls",
+    filename.split(".")[0],
+  );
+
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  const outputPath = path.join(outputDir, "index.m3u8");
+
+  const cmd = `ffmpeg -i "${inputPath}" -profile:v baseline -level 3.0 -start_number 0 -hls_time 10 -hls_list_size 0 -hls_segment_filename "${outputDir}/segment_%03d.ts" -f hls "${outputPath}"`;
+
+  exec(cmd, (err, stdout, stderr) => {
+    if (err) {
+      console.error("FFmpeg error:", stderr);
+    } else {
+      console.log("HLS created for:", filename);
+    }
+  });
+}
 
 // // Create Post
 // router.post("/", upload.array("media", 10), async (req, res) => {
@@ -658,13 +697,28 @@ router.post("/", upload.array("media", 10), async (req, res) => {
     // });
 
     // -----Chunked video logic
+    // const media = req.files.map((file) => {
+    //   const isVideo = file.mimetype.startsWith("video");
+
+    //   return {
+    //     url: isVideo
+    //       ? `/api/video/${file.filename}` // ✅ videos go through stream route
+    //       : `/uploads/images/${file.filename}`, // images remain static
+    //     type: isVideo ? "videos" : "images",
+    //   };
+    // });
+
     const media = req.files.map((file) => {
       const isVideo = file.mimetype.startsWith("video");
 
+      if (isVideo) {
+        convertToHLS(file.filename); // 🔥 FFmpeg runs here
+      }
+
       return {
         url: isVideo
-          ? `/api/video/${file.filename}` // ✅ videos go through stream route
-          : `/uploads/images/${file.filename}`, // images remain static
+          ? `/hls/${file.filename.split(".")[0]}/index.m3u8` // ✅ HLS url
+          : `/uploads/images/${file.filename}`,
         type: isVideo ? "videos" : "images",
       };
     });
