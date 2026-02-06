@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
+const jobCache = require("../../redis/jobCacheManager");
+const isAuthenticated = require("../../middleware/sessionChecker");
 
 router.post("/", async (req, res) => {
   try {
@@ -46,7 +48,7 @@ router.post("/", async (req, res) => {
         userId,
         is_brand,
         applyLink,
-      ]
+      ],
     );
 
     return res.status(201).json({
@@ -81,10 +83,16 @@ router.post("/", async (req, res) => {
 //   }
 // });
 
-router.get("/", async (req, res) => {
+router.get("/", isAuthenticated, async (req, res) => {
+  const limit = parseInt(req.query.limit) || 10;
+  const offset = parseInt(req.query.offset) || 0;
+  const userId = req.currentUser.user_id;
   try {
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = parseInt(req.query.offset) || 0;
+    const cachedJob = await jobCache.getCachedJob(userId, limit, offset);
+
+    if (cachedJob) {
+      return res.status(200).json(cachedJob);
+    }
 
     const result = await pool.query(
       `
@@ -95,14 +103,17 @@ router.get("/", async (req, res) => {
       ORDER BY j.created_at DESC
       LIMIT $1 OFFSET $2
     `,
-      [limit, offset]
+      [limit, offset],
     );
-
-    return res.status(200).json({
+    const response = {
       success: true,
       jobs: result.rows,
       count: result.rows.length,
-    });
+    };
+
+    // cache jobs
+    await jobCache.cacheJob(userId, limit, offset, response);
+    return res.status(200).json(response);
   } catch (error) {
     console.error("Error fetching jobs:", error);
     return res.status(500).json({ message: "Internal server error" });
