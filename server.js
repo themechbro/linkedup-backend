@@ -120,6 +120,7 @@ app.use("/api/jobs", JobAllRoutes);
 // Profile Routes
 app.use("/api/profile/update", UpdateProfileSectionRoutes);
 app.use("/api/profile/details/get/", FetchprofileSectionRoutes);
+app.use("/api/profile/fetch/", require("./routes/profile/profile"));
 
 // app.listen(8000, "0.0.0.0", () => {
 //   console.log("Server is running on port 8000");
