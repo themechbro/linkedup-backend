@@ -849,13 +849,9 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.get("/likelist", async (req, res) => {
+router.get("/likelist", isAuthenticated, async (req, res) => {
   try {
-    const currentUser = req.session.user;
-
-    if (!currentUser) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
+    const currentUser = req.currentUser;
 
     const { post_id } = req.query;
 
@@ -1411,14 +1407,12 @@ router.get("/checkLatestConnectionPost", isAuthenticated, async (req, res) => {
     const lastSeenPostId = await redis.get(lastSeenKey);
 
     // Determine if there are new posts
-    const hasNewPosts = lastSeenPostId
-      ? latestPostId !== parseInt(lastSeenPostId)
-      : true;
+    const hasNewPosts = lastSeenPostId ? latestPostId !== lastSeenPostId : true;
 
     res.json({
       latestPostId,
       hasNewPosts,
-      lastSeenPostId: lastSeenPostId ? parseInt(lastSeenPostId) : null,
+      lastSeenPostId,
     });
   } catch (error) {
     console.error("Error checking latest post:", error);

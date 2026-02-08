@@ -4,14 +4,7 @@ const pool = require("../../db");
 const isAuthenticated = require("../../middleware/sessionChecker");
 
 // Fetch About
-router.get("/fetch-about", async (req, res) => {
-  const user = req.session.user;
-  if (!user) {
-    return res
-      .status(401)
-      .json({ message: "Unauthorized Access", success: false });
-  }
-
+router.get("/fetch-about", isAuthenticated, async (req, res) => {
   const { profileId } = req.query;
 
   if (!profileId) {
@@ -41,14 +34,7 @@ router.get("/fetch-about", async (req, res) => {
 });
 
 // Fetch Education
-router.get("/fetch-education", async (req, res) => {
-  const user = req.session.user;
-  if (!user) {
-    return res
-      .status(401)
-      .json({ message: "Unauthorized Access", success: false });
-  }
-
+router.get("/fetch-education", isAuthenticated, async (req, res) => {
   const { profileId } = req.query;
 
   if (!profileId) {
@@ -79,15 +65,7 @@ router.get("/fetch-education", async (req, res) => {
 
 // fetch About for brands
 
-router.get("/fetch-about-brands", async (req, res) => {
-  const user = req.session.user;
-  if (!user) {
-    return res.status(401).json({
-      message: "Unauthorized access",
-      success: false,
-    });
-  }
-
+router.get("/fetch-about-brands", isAuthenticated, async (req, res) => {
   const { profileId } = req.query;
   if (!profileId) {
     return res.status(400).json({

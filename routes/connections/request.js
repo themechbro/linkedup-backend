@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
+const isAuthenticated = require("../../middleware/sessionChecker");
 
 // send request
 // router.post("/request", async (req, res) => {
@@ -42,7 +43,7 @@ router.post("/request", async (req, res) => {
     const exists = await pool.query(
       `SELECT * FROM connections 
        WHERE user_id=$1 AND connection_id=$2`,
-      [sender_id, receiver_id]
+      [sender_id, receiver_id],
     );
     if (exists.rows.length > 0)
       return res.status(400).json({ message: "Already connected" });
@@ -51,7 +52,7 @@ router.post("/request", async (req, res) => {
     const pending = await pool.query(
       `SELECT * FROM connection_requests 
        WHERE sender_id=$1 AND receiver_id=$2 AND status='pending'`,
-      [sender_id, receiver_id]
+      [sender_id, receiver_id],
     );
     if (pending.rows.length > 0)
       return res.status(400).json({ message: "Request already sent" });
@@ -60,13 +61,13 @@ router.post("/request", async (req, res) => {
     await pool.query(
       `DELETE FROM connection_requests 
        WHERE sender_id=$1 AND receiver_id=$2`,
-      [sender_id, receiver_id]
+      [sender_id, receiver_id],
     );
 
     // 👇 Now insert new request
     await pool.query(
       `INSERT INTO connection_requests (sender_id, receiver_id) VALUES ($1, $2)`,
-      [sender_id, receiver_id]
+      [sender_id, receiver_id],
     );
 
     res.json({ message: "Connection request sent" });
@@ -86,7 +87,7 @@ router.post("/accept", async (req, res) => {
       `SELECT * FROM connections 
        WHERE (user_id = $1 AND connection_id = $2) 
           OR (user_id = $2 AND connection_id = $1)`,
-      [sender_id, receiver_id]
+      [sender_id, receiver_id],
     );
 
     if (existingConnection.rows.length > 0) {
@@ -100,14 +101,14 @@ router.post("/accept", async (req, res) => {
     await pool.query(
       `DELETE FROM connection_requests 
        WHERE sender_id=$1 AND receiver_id=$2`,
-      [sender_id, receiver_id]
+      [sender_id, receiver_id],
     );
 
     // Create bidirectional connection
     await pool.query(
       `INSERT INTO connections (user_id, connection_id) 
        VALUES ($1, $2), ($2, $1)`,
-      [sender_id, receiver_id]
+      [sender_id, receiver_id],
     );
 
     res.json({ message: "You are now connected!" });
@@ -128,7 +129,7 @@ router.post("/reject", async (req, res) => {
     await pool.query(
       `DELETE FROM connection_requests 
        WHERE sender_id=$1 AND receiver_id=$2`,
-      [sender_id, receiver_id]
+      [sender_id, receiver_id],
     );
 
     res.json({ message: "Request rejected" });
@@ -147,7 +148,7 @@ router.post("/remove", async (req, res) => {
       `DELETE FROM connections 
        WHERE (user_id=$1 AND connection_id=$2)
        OR (user_id=$2 AND connection_id=$1)`,
-      [user, other_id]
+      [user, other_id],
     );
 
     res.json({ message: "Disconnected" });
@@ -276,6 +277,43 @@ router.get("/connection_length_user", async (req, res) => {
     return res
       .status(500)
       .json({ message: "Internal server error", success: false });
+  }
+});
+
+router.get("/incoming_requests", isAuthenticated, async (req, res) => {
+  const current_user = req.currentUser;
+
+  try {
+    const incoming_req = await pool.query(
+      `SELECT sender_id FROM connection_requests WHERE receiver_id=$1`,
+      [current_user.user_id],
+    );
+
+    const senderIds = incoming_req.rows.map((row) => row.sender_id);
+
+    // ✅ If no incoming requests, return empty array
+    if (senderIds.length === 0) {
+      return res.json({ success: true, requests: [] });
+    }
+
+    // ✅ BETTER: Single query with IN clause (more efficient)
+    const profileDetails = await pool.query(
+      `SELECT user_id, username, full_name, headline, profile_picture, isVerified 
+       FROM users 
+       WHERE user_id = ANY($1)`,
+      [senderIds],
+    );
+
+    res.json({
+      success: true,
+      requests: profileDetails.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching incoming requests:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
   }
 });
 module.exports = router;
