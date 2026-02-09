@@ -4,7 +4,6 @@ const pool = require("../../db");
 const axios = require("axios");
 const { apiLimiter } = require("../../middleware/rateLimiter");
 const { signInternalJwt } = require("../../utils/internalJwt");
-
 // Education
 router.post("/post-education", apiLimiter, async (req, res) => {
   const user = req.session.user;
@@ -69,12 +68,90 @@ router.post("/post-education", apiLimiter, async (req, res) => {
         activities || null,
         description || null,
         currently_studying,
-      ]
+      ],
     );
 
     return res.status(201).json({
       success: true,
       message: "Education added successfully",
+      education: response.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Internal Server Error",
+      success: false,
+    });
+  }
+});
+
+// Work
+router.post("/post-work", apiLimiter, async (req, res) => {
+  const user = req.session.user;
+  if (!user) {
+    return res
+      .status(401)
+      .json({ message: "Unauthorized Access", success: false });
+  }
+
+  const {
+    title,
+    company,
+    location,
+    start_date,
+    end_date,
+    description,
+    currently_working,
+    type,
+  } = req.body;
+
+  if (!title || !company || !location || !start_date) {
+    return res.status(400).json({
+      message: "Please fill all required fields",
+      success: false,
+    });
+  }
+
+  if (!currently_working && !end_date) {
+    return res.status(400).json({
+      message: "End date is required if you are not currently studying",
+      success: false,
+    });
+  }
+
+  try {
+    const response = await pool.query(
+      `
+      INSERT INTO work (
+        user_id,
+        title,
+        company,
+        location,
+        start_date,
+        end_date,
+        description,
+        currently_working,
+        type
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      RETURNING *
+      `,
+      [
+        user.user_id,
+        title,
+        company,
+        location,
+        start_date,
+        currently_working ? null : end_date,
+        description || null,
+        currently_working,
+        type,
+      ],
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Work (position) added successfully",
       education: response.rows[0],
     });
   } catch (error) {
@@ -94,40 +171,6 @@ router.post("/post-about", apiLimiter, async (req, res) => {
       .status(401)
       .json({ message: "Unauthorized Access", success: false });
   }
-  // const { about } = req.body;
-  // const { user_id } = user;
-
-  // if (typeof about !== "string" || !about.trim()) {
-  //   return res.status(400).json({
-  //     message: "About section is required",
-  //     success: false,
-  //   });
-  // }
-
-  // try {
-  //   const result = await pool.query(
-  //     `
-  //     UPDATE users
-  //     SET about=$1
-  //     WHERE user_id=$2
-  //     RETURNING user_id, about
-  //     `,
-  //     [about.trim(), user_id]
-  //   );
-
-  //   return res.status(201).json({
-  //     message: "About successfully added",
-  //     success: true,
-  //     about: result.rows[0],
-  //   });
-  // } catch (error) {
-  //   console.error(error);
-  //   return res.status(500).json({
-  //     message: "Internal Server Error",
-  //     success: false,
-  //   });
-  // }
-
   const token = signInternalJwt(user);
 
   try {
@@ -138,7 +181,7 @@ router.post("/post-about", apiLimiter, async (req, res) => {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-      }
+      },
     );
     res.json(response.data);
   } catch (error) {
@@ -167,7 +210,7 @@ router.post("/post-industry", apiLimiter, async (req, res) => {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-      }
+      },
     );
 
     res.json(response.data);
@@ -197,7 +240,7 @@ router.post("/post-website", apiLimiter, async (req, res) => {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-      }
+      },
     );
 
     res.json(response.data);
@@ -227,7 +270,7 @@ router.post("/post-company-hq", apiLimiter, async (req, res) => {
         headers: {
           Authorization: `Bearer ${token}`,
         },
-      }
+      },
     );
 
     res.json(response.data);

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
 const isAuthenticated = require("../../middleware/sessionChecker");
+const profileCache = require("../../redis/profileCacheManager");
 
 // Fetch About
 router.get("/fetch-about", isAuthenticated, async (req, res) => {
@@ -12,16 +13,27 @@ router.get("/fetch-about", isAuthenticated, async (req, res) => {
   }
 
   try {
+    const cachedProfileAbout = await profileCache.getCachedAbout(profileId);
+    if (cachedProfileAbout) {
+      return res.status(200).json({
+        success: true,
+        about: cachedProfileAbout,
+        source: "redis",
+        message: "Fetch Success from cache",
+      });
+    }
+
     const result = await pool.query(
       `
         SELECT about FROM users WHERE user_id=$1
         `,
       [profileId],
     );
-
+    const about = result.rows[0].about;
+    await profileCache.cacheProfileAbout(profileId, about);
     return res.status(200).json({
       message: "Fetch success",
-      about: result.rows[0].about,
+      about,
       success: true,
     });
   } catch (error) {
@@ -42,17 +54,72 @@ router.get("/fetch-education", isAuthenticated, async (req, res) => {
   }
 
   try {
+    const cachedProfileEdu = await profileCache.getCachedEdu(profileId);
+    if (cachedProfileEdu) {
+      return res.status(200).json({
+        success: true,
+        education: cachedProfileEdu,
+        source: "redis",
+        message: "Fetch Success from cache",
+      });
+    }
+
     const result = await pool.query(
       `
         SELECT * FROM education WHERE user_id=$1
         `,
       [profileId],
     );
+    const education = result.rows;
+    await profileCache.cacheProfileEdu(profileId, education);
+    return res.status(200).json({
+      message: "Fetch success",
+      education,
+      success: true,
+      source: "db",
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Internal Server Error",
+      success: false,
+    });
+  }
+});
+
+//Fetch Work
+router.get("/fetch-work", isAuthenticated, async (req, res) => {
+  const { profileId } = req.query;
+
+  if (!profileId) {
+    return res.status(400).json({ message: "Incomplete", success: false });
+  }
+
+  try {
+    const cachedProfileWork = await profileCache.getCachedWork(profileId);
+    if (cachedProfileWork) {
+      return res.status(200).json({
+        success: true,
+        work: cachedProfileWork,
+        source: "redis",
+        message: "Fetch Success from cache",
+      });
+    }
+
+    const result = await pool.query(
+      `
+        SELECT * FROM work WHERE user_id=$1
+        `,
+      [profileId],
+    );
+    const work = result.rows;
+    await profileCache.cacheProfileWork(profileId, work);
 
     return res.status(200).json({
       message: "Fetch success",
-      education: result.rows,
+      work,
       success: true,
+      source: "db",
     });
   } catch (error) {
     console.error(error);

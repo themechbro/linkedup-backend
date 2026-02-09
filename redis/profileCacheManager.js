@@ -6,10 +6,23 @@ class ProfileCacheManager {
     this.PROFILE_PREFIX = "profile:";
     this.DEFAULT_TTL = 1800;
     this.EMPTY_TTL = 300;
+    this.PROFILE_ABOUT = "profile:about:";
+    this.PROFILE_EDU = "profile:edu:";
+    this.PROFILE_WORK = "profile:work:";
   }
 
   getCachekey(profileId) {
     return `${this.PROFILE_PREFIX}${profileId}`;
+  }
+
+  getCachekeyAbout(profileId) {
+    return `${this.PROFILE_ABOUT}${profileId}`;
+  }
+  getCachekeyEdu(profileId) {
+    return `${this.PROFILE_EDU}${profileId}`;
+  }
+  getCachekeyWork(profileId) {
+    return `${this.PROFILE_WORK}${profileId}`;
   }
 
   async getprofileKey(profileId) {
@@ -22,7 +35,7 @@ class ProfileCacheManager {
       return [];
     }
   }
-
+  // Profile
   async cacheProfile(profileId, profileData, ttl = null) {
     const cacheKey = this.getCachekey(profileId);
     const cacheTTL =
@@ -38,6 +51,53 @@ class ProfileCacheManager {
     }
   }
 
+  // About
+  async cacheProfileAbout(profileId, about, ttl = null) {
+    const key = this.getCachekeyAbout(profileId);
+    const cacheTTL =
+      ttl || (about.length === 0 ? this.EMPTY_TTL : this.DEFAULT_TTL);
+
+    try {
+      await redis.setEx(key, cacheTTL, JSON.stringify(about));
+      console.log(`💾 Cached Profile About ${profileId}`);
+      return true;
+    } catch (error) {
+      console.error("Error caching About for profile:", error);
+      return false;
+    }
+  }
+  // Education
+  async cacheProfileEdu(profileId, edu, ttl = null) {
+    const key = this.getCachekeyEdu(profileId);
+    const cacheTTL =
+      ttl || (edu.length === 0 ? this.EMPTY_TTL : this.DEFAULT_TTL);
+
+    try {
+      await redis.setEx(key, cacheTTL, JSON.stringify(edu));
+      console.log(`💾 Cached Profile Education ${profileId}`);
+      return true;
+    } catch (error) {
+      console.error("Error caching Education for profile:", error);
+      return false;
+    }
+  }
+  // Work
+  async cacheProfileWork(profileId, work, ttl = null) {
+    const key = this.getCachekeyWork(profileId);
+    const cacheTTL =
+      ttl || (work.length === 0 ? this.EMPTY_TTL : this.DEFAULT_TTL);
+
+    try {
+      await redis.setEx(key, cacheTTL, JSON.stringify(work));
+      console.log(`💾 Cached Profile Work ${profileId}`);
+      return true;
+    } catch (error) {
+      console.error("Error caching Work for profile:", error);
+      return false;
+    }
+  }
+
+  // Getters
   async getCachedProfile(profileId) {
     const cacheKey = this.getCachekey(profileId);
 
@@ -57,6 +117,64 @@ class ProfileCacheManager {
     }
   }
 
+  async getCachedAbout(profileId) {
+    const cacheKey = this.getCachekeyAbout(profileId);
+
+    try {
+      const cached = await redis.get(cacheKey);
+
+      if (cached) {
+        console.log(`✅ Cache HIT for profile ${profileId} for About )`);
+        return JSON.parse(cached);
+      }
+
+      console.log(`❌ Cache MISS for profile ${profileId} for About`);
+      return null;
+    } catch (error) {
+      console.error("Error getting cached feed:", error);
+      return null;
+    }
+  }
+
+  async getCachedEdu(profileId) {
+    const cacheKey = this.getCachekeyEdu(profileId);
+
+    try {
+      const cached = await redis.get(cacheKey);
+
+      if (cached) {
+        console.log(`✅ Cache HIT for profile ${profileId} for Education`);
+        return JSON.parse(cached);
+      }
+
+      console.log(`❌ Cache MISS for profile ${profileId} for Education`);
+      return null;
+    } catch (error) {
+      console.error("Error getting cached feed:", error);
+      return null;
+    }
+  }
+
+  async getCachedWork(profileId) {
+    const cacheKey = this.getCachekeyWork(profileId);
+
+    try {
+      const cached = await redis.get(cacheKey);
+
+      if (cached) {
+        console.log(`✅ Cache HIT for profile ${profileId} for Work`);
+        return JSON.parse(cached);
+      }
+
+      console.log(`❌ Cache MISS for profile ${profileId} for Work`);
+      return null;
+    } catch (error) {
+      console.error("Error getting cached feed:", error);
+      return null;
+    }
+  }
+
+  // Invalidate
   async invalidateUserProfile(profileId) {
     try {
       const keys = await this.getprofileKey(profileId);
