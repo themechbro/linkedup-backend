@@ -5,12 +5,13 @@ const upload = require("../middleware/upload");
 const { v4: uuid } = require;
 const path = require("path");
 const fs = require("fs");
+const isAuthenticated = require("../middleware/sessionChecker");
 
 const commentImagesPath = path.join(
   __dirname,
   "..",
   "uploads",
-  "comment-images"
+  "comment-images",
 );
 if (!fs.existsSync(commentImagesPath)) {
   fs.mkdirSync(commentImagesPath, { recursive: true });
@@ -107,7 +108,7 @@ router.post("/:post_id/comments", upload.single("image"), async (req, res) => {
       `INSERT INTO comments (post_id, user_id, parent_comment_id, content, media_url)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [post_id, user_id, parent_comment_id, content, media_url]
+      [post_id, user_id, parent_comment_id, content, media_url],
     );
 
     res.status(201).json({ success: true, comment: result.rows[0] });
@@ -190,4 +191,27 @@ router.get("/:post_id/comments", async (req, res) => {
   }
 });
 
+router.get("/comment_length", isAuthenticated, async (req, res) => {
+  try {
+    const { post_id } = req.query;
+
+    const response = await fetch(
+      `${process.env.SPRING_MICROSERVICE}/api/comments/${post_id}/length`,
+      {
+        method: "GET",
+      },
+    );
+    const data = await response.json();
+    console.log(data);
+    return res.status(200).json({
+      length: data,
+    });
+  } catch (error) {
+    console.log(error);
+    return req.status(500).json({
+      message: "Internal Server Error",
+      success: false,
+    });
+  }
+});
 module.exports = router;
