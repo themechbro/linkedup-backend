@@ -61,7 +61,8 @@ app.use(express.json()); // Body parser for JSON
 app.use(express.urlencoded({ extended: true }));
 app.use("/hls", express.static(path.join(__dirname, "uploads/hls")));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-app.use("/api/video", require("./routes/post/videoStream"));
+app.use("/api/video", require("./routes/post/videoStream")); //Not in use Temp
+app.use("/sprites", express.static(path.join(__dirname, "uploads/sprites")));
 
 // io set
 app.set("io", io);

@@ -191,27 +191,27 @@ router.get("/:post_id/comments", async (req, res) => {
   }
 });
 
-router.get("/comment_length", isAuthenticated, async (req, res) => {
-  try {
-    const { post_id } = req.query;
+// eliminated this route as its now fetched through Feed Service
+// router.get("/comment_length", isAuthenticated, async (req, res) => {
+//   try {
+//     const { post_id } = req.query;
 
-    const response = await fetch(
-      `${process.env.SPRING_MICROSERVICE}/api/comments/${post_id}/length`,
-      {
-        method: "GET",
-      },
-    );
-    const data = await response.json();
-    console.log(data);
-    return res.status(200).json({
-      length: data,
-    });
-  } catch (error) {
-    console.log(error);
-    return req.status(500).json({
-      message: "Internal Server Error",
-      success: false,
-    });
-  }
-});
+//     const response = await fetch(
+//       `${process.env.SPRING_MICROSERVICE}/api/comments/${post_id}/length`,
+//       {
+//         method: "GET",
+//       },
+//     );
+//     const data = await response.json();
+//     return res.status(200).json({
+//       length: data,
+//     });
+//   } catch (error) {
+//     console.log(error);
+//     return req.status(500).json({
+//       message: "Internal Server Error",
+//       success: false,
+//     });
+//   }
+// });
 module.exports = router;
