@@ -2,9 +2,12 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
 const bcrypt = require("bcryptjs");
-const { loginLimiter } = require("../../middleware/rateLimiter");
+const {
+  loginLimiter,
+  loginUserLimiter,
+} = require("../../middleware/rateLimiter");
 
-router.post("/login", loginLimiter, async (req, res) => {
+router.post("/login", loginLimiter, loginUserLimiter, async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -17,7 +20,7 @@ router.post("/login", loginLimiter, async (req, res) => {
   try {
     const userResult = await pool.query(
       `SELECT * FROM users WHERE username=$1`,
-      [username]
+      [username],
     );
 
     if (userResult.rows.length === 0) {

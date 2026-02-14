@@ -29,6 +29,8 @@ const sessionMiddleware = session({
 const server = http.createServer(app);
 const io = initSocket(server, sessionMiddleware);
 
+app.set("trust proxy", 1);
+
 app.use(
   cors({
     origin: ["http://localhost:3000", "http://192.168.1.6:3000"], // your frontend URLs

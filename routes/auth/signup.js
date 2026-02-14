@@ -3,8 +3,12 @@ const router = express.Router();
 const pool = require("../../db");
 const { v4: uuidv4 } = require("uuid");
 const bcrypt = require("bcryptjs");
+const {
+  signupLimiter,
+  signupUserLimiter,
+} = require("../../middleware/rateLimiter");
 
-router.post("/signup", async (req, res) => {
+router.post("/signup", signupLimiter, signupUserLimiter, async (req, res) => {
   const { email, password, username, full_name } = req.body;
   console.log(email, password, username);
 
@@ -17,7 +21,7 @@ router.post("/signup", async (req, res) => {
   try {
     const existingUser = await pool.query(
       `SELECT * FROM users WHERE email=$1 OR username=$2`,
-      [email, username]
+      [email, username],
     );
 
     if (existingUser.rows.length > 0) {
@@ -35,7 +39,7 @@ router.post("/signup", async (req, res) => {
       `INSERT INTO users(user_id,email, password, created_at, type, username, full_name )
         VALUES($1,$2,$3,NOW(),$4,$5, $6)
         `,
-      [user_id, email, hashedPassword, type, username, full_name]
+      [user_id, email, hashedPassword, type, username, full_name],
     );
 
     return res.status(201).json({
