@@ -10,6 +10,10 @@ const { exec } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const { convertToHLS, generateSprite } = require("./videoHelpers");
+const {
+  postIpLimiter,
+  postUserLimiter,
+} = require("../../middleware/rateLimiter");
 
 // function convertToHLS(filename) {
 //   const inputPath = path.join(
@@ -52,55 +56,61 @@ const { convertToHLS, generateSprite } = require("./videoHelpers");
 // 2nd Version
 // Create Post
 
-router.post("/", upload.array("media", 10), async (req, res) => {
-  try {
-    if (!req.session.user || !req.session.user.user_id) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
-    const { content } = req.body;
-    const owner = req.session.user.user_id;
-
-    const media = req.files.map((file) => {
-      const isVideo = file.mimetype.startsWith("video");
-
-      if (isVideo) {
-        convertToHLS(file.filename); // 🔥 FFmpeg runs here
-
-        setImmediate(() => {
-          generateSprite(file.filename);
-        });
+router.post(
+  "/",
+  postUserLimiter,
+  postIpLimiter,
+  upload.array("media", 10),
+  async (req, res) => {
+    try {
+      if (!req.session.user || !req.session.user.user_id) {
+        return res.status(401).json({ message: "Unauthorized" });
       }
 
-      return {
-        url: isVideo
-          ? `/hls/${file.filename.split(".")[0]}/index.m3u8` // ✅ HLS url
-          : `/uploads/images/${file.filename}`,
-        type: isVideo ? "videos" : "images",
-      };
-    });
+      const { content } = req.body;
+      const owner = req.session.user.user_id;
 
-    const result = await pool.query(
-      `INSERT INTO posts (content, media_url, likes, status, owner, created_at)
+      const media = req.files.map((file) => {
+        const isVideo = file.mimetype.startsWith("video");
+
+        if (isVideo) {
+          convertToHLS(file.filename); // 🔥 FFmpeg runs here
+
+          setImmediate(() => {
+            generateSprite(file.filename);
+          });
+        }
+
+        return {
+          url: isVideo
+            ? `/hls/${file.filename.split(".")[0]}/index.m3u8` // ✅ HLS url
+            : `/uploads/images/${file.filename}`,
+          type: isVideo ? "videos" : "images",
+        };
+      });
+
+      const result = await pool.query(
+        `INSERT INTO posts (content, media_url, likes, status, owner, created_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
        RETURNING *`,
-      [content, JSON.stringify(media), 0, "created", owner],
-    );
+        [content, JSON.stringify(media), 0, "created", owner],
+      );
 
-    // ⭐ Invalidate feed cache for all connections
-    feedCache.invalidateConnectionFeeds(owner).catch((err) => {
-      console.error("Cache invalidation error:", err);
-    });
+      // ⭐ Invalidate feed cache for all connections
+      feedCache.invalidateConnectionFeeds(owner).catch((err) => {
+        console.error("Cache invalidation error:", err);
+      });
 
-    res.status(201).json({
-      message: "Post created successfully",
-      post: result.rows[0],
-    });
-  } catch (err) {
-    console.error("Error creating post:", err);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+      res.status(201).json({
+        message: "Post created successfully",
+        post: result.rows[0],
+      });
+    } catch (err) {
+      console.error("Error creating post:", err);
+      res.status(500).json({ message: "Internal Server Error" });
+    }
+  },
+);
 
 router.get("/", async (req, res) => {
   try {

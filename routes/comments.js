@@ -6,6 +6,10 @@ const { v4: uuid } = require;
 const path = require("path");
 const fs = require("fs");
 const isAuthenticated = require("../middleware/sessionChecker");
+const {
+  commentUserLimiter,
+  commentIpLimiter,
+} = require("../middleware/rateLimiter");
 
 const commentImagesPath = path.join(
   __dirname,
@@ -81,42 +85,45 @@ if (!fs.existsSync(commentImagesPath)) {
 //   }
 // });
 
-router.post("/:post_id/comments", upload.single("image"), async (req, res) => {
-  const { post_id } = req.params;
-  const { content, parent_comment_id } = req.body;
-  const { user_id } = req.session.user;
+router.post(
+  "/:post_id/comments",
+  commentUserLimiter,
+  commentIpLimiter,
+  isAuthenticated,
+  upload.single("image"),
+  async (req, res) => {
+    const { post_id } = req.params;
+    const { content, parent_comment_id } = req.body;
+    const { user_id } = req.currentUser;
 
-  if (!user_id) {
-    return res.status(401).json({ message: "Unauthorized", success: false });
-  }
+    try {
+      let media_url = null;
 
-  try {
-    let media_url = null;
+      if (req.file) {
+        // Move uploaded image to comment-images folder
+        const ext = req.file.originalname.split(".").pop();
+        const filename = `${Date.now()}-${req.file.originalname}`;
+        const finalPath = path.join(commentImagesPath, filename);
 
-    if (req.file) {
-      // Move uploaded image to comment-images folder
-      const ext = req.file.originalname.split(".").pop();
-      const filename = `${Date.now()}-${req.file.originalname}`;
-      const finalPath = path.join(commentImagesPath, filename);
+        fs.renameSync(req.file.path, finalPath); // move file from temp folder
 
-      fs.renameSync(req.file.path, finalPath); // move file from temp folder
+        media_url = `/uploads/comment-images/${filename}`;
+      }
 
-      media_url = `/uploads/comment-images/${filename}`;
-    }
-
-    const result = await pool.query(
-      `INSERT INTO comments (post_id, user_id, parent_comment_id, content, media_url)
+      const result = await pool.query(
+        `INSERT INTO comments (post_id, user_id, parent_comment_id, content, media_url)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [post_id, user_id, parent_comment_id, content, media_url],
-    );
+        [post_id, user_id, parent_comment_id, content, media_url],
+      );
 
-    res.status(201).json({ success: true, comment: result.rows[0] });
-  } catch (err) {
-    console.error("Error posting comment:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
+      res.status(201).json({ success: true, comment: result.rows[0] });
+    } catch (err) {
+      console.error("Error posting comment:", err);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  },
+);
 
 router.get("/:post_id/comments", async (req, res) => {
   const { post_id } = req.params;
