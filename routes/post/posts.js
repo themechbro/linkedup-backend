@@ -14,47 +14,36 @@ const {
   postIpLimiter,
   postUserLimiter,
 } = require("../../middleware/rateLimiter");
+const { feedFetchLimiter } = require("../../middleware/feedLimiter");
 
-// function convertToHLS(filename) {
-//   const inputPath = path.join(
-//     __dirname,
-//     "..",
-//     "..",
-//     "uploads",
-//     "videos",
-//     filename,
-//   );
+// Helper connections
+const getCachedConnections = async (userId) => {
+  const key = `connections:${userId}`;
 
-//   const outputDir = path.join(
-//     __dirname,
-//     "..",
-//     "..",
-//     "uploads",
-//     "hls",
-//     filename.split(".")[0],
-//   );
+  const cached = await redis.get(key);
 
-//   if (!fs.existsSync(outputDir)) {
-//     fs.mkdirSync(outputDir, { recursive: true });
-//   }
+  if (cached) {
+    return JSON.parse(cached);
+  }
 
-//   const outputPath = path.join(outputDir, "index.m3u8");
+  const result = await pool.query(
+    `SELECT connection_id FROM connections WHERE user_id = $1`,
+    [userId],
+  );
 
-//   const cmd = `ffmpeg -i "${inputPath}" -profile:v baseline -level 3.0 -start_number 0 -hls_time 10 -hls_list_size 0 -hls_segment_filename "${outputDir}/segment_%03d.ts" -f hls "${outputPath}"`;
+  const connectionIds = [
+    userId,
+    ...result.rows.map((row) => row.connection_id),
+  ];
 
-//   exec(cmd, (err, stdout, stderr) => {
-//     if (err) {
-//       console.error("FFmpeg error:", stderr);
-//     } else {
-//       console.log("HLS created for:", filename);
-//     }
-//   });
-// }
+  await redis.set(
+    key,
+    JSON.stringify(connectionIds),
+    { EX: 300 }, // 5 min TTL
+  );
 
-//Sprite Thumbnail generator
-
-// 2nd Version
-// Create Post
+  return connectionIds;
+};
 
 router.post(
   "/",
@@ -557,163 +546,171 @@ router.get("/getPost", async (req, res) => {
 // ========================================================
 // ⭐ REDIS-CACHED CONNECTION FEED WITH CACHE MANAGER
 // ========================================================
-router.get("/getconnectionsPost", isAuthenticated, async (req, res) => {
-  const userId = req.currentUser.user_id;
-  const limit = parseInt(req.query.limit, 10) || 10;
-  const offset = parseInt(req.query.offset, 10) || 0;
+router.get(
+  "/getconnectionsPost",
+  isAuthenticated,
+  feedFetchLimiter,
+  async (req, res) => {
+    const userId = req.currentUser.user_id;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const offset = parseInt(req.query.offset, 10) || 0;
 
-  try {
-    // ⭐ STEP 1: Check Redis cache
-    const cachedFeed = await feedCache.getCachedFeed(userId, limit, offset);
+    try {
+      // ⭐ STEP 1: Check Redis cache
+      const cachedFeed = await feedCache.getCachedFeed(userId, limit, offset);
 
-    if (cachedFeed) {
-      return res.status(200).json(cachedFeed);
-    }
-
-    // ⭐ STEP 2: Fetch connection IDs from database
-    const result = await pool.query(
-      `SELECT connection_id FROM connections WHERE user_id = $1`,
-      [userId],
-    );
-
-    // const connectionIds = result.rows.map((row) => row.connection_id);
-    const connectionIds = [
-      userId, // 👈 include self posts
-      ...result.rows.map((row) => row.connection_id),
-    ];
-    if (connectionIds.length === 0) {
-      const emptyResponse = {
-        success: true,
-        feed: [],
-        limit,
-        offset,
-      };
-
-      // Cache empty result
-      await feedCache.cacheFeed(userId, limit, offset, emptyResponse);
-
-      return res.status(200).json(emptyResponse);
-    }
-
-    // ⭐ STEP 3: Call Java Feed microservice
-    const feedResponse = await fetch(
-      `${process.env.SPRING_MICROSERVICE}/api/feed?limit=${limit}&offset=${offset}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(connectionIds),
-      },
-    );
-
-    if (!feedResponse.ok) {
-      throw new Error("Feed service failed");
-    }
-
-    const feed = await feedResponse.json();
-
-    // ⭐ STEP 4: Collect ALL user IDs (reposter + original author)
-    const userIdSet = new Set();
-
-    feed.forEach((post) => {
-      if (post.owner) userIdSet.add(post.owner);
-
-      if (post.repostedPost?.owner) {
-        userIdSet.add(post.repostedPost.owner);
+      if (cachedFeed) {
+        return res.status(200).json(cachedFeed);
       }
-    });
 
-    const userIds = Array.from(userIdSet);
+      // ⭐ STEP 2: Fetch connection IDs from database
+      // const result = await pool.query(
+      //   `SELECT connection_id FROM connections WHERE user_id = $1`,
+      //   [userId],
+      // );
 
-    // ⭐ STEP 5: Fetch user details in ONE query
-    const usersResult = await pool.query(
-      `
+      // // const connectionIds = result.rows.map((row) => row.connection_id);
+      // const connectionIds = [
+      //   userId, // 👈 include self posts
+      //   ...result.rows.map((row) => row.connection_id),
+      // ];
+
+      const connectionIds = await getCachedConnections(userId);
+
+      if (connectionIds.length === 0) {
+        const emptyResponse = {
+          success: true,
+          feed: [],
+          limit,
+          offset,
+        };
+
+        // Cache empty result
+        await feedCache.cacheFeed(userId, limit, offset, emptyResponse);
+
+        return res.status(200).json(emptyResponse);
+      }
+
+      // ⭐ STEP 3: Call Java Feed microservice
+      const feedResponse = await fetch(
+        `${process.env.SPRING_MICROSERVICE}/api/feed?limit=${limit}&offset=${offset}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(connectionIds),
+        },
+      );
+
+      if (!feedResponse.ok) {
+        throw new Error("Feed service failed");
+      }
+
+      const feed = await feedResponse.json();
+
+      // ⭐ STEP 4: Collect ALL user IDs (reposter + original author)
+      const userIdSet = new Set();
+
+      feed.forEach((post) => {
+        if (post.owner) userIdSet.add(post.owner);
+
+        if (post.repostedPost?.owner) {
+          userIdSet.add(post.repostedPost.owner);
+        }
+      });
+
+      const userIds = Array.from(userIdSet);
+
+      // ⭐ STEP 5: Fetch user details in ONE query
+      const usersResult = await pool.query(
+        `
       SELECT user_id, username, full_name, type, profile_picture
       FROM users
       WHERE user_id = ANY($1)
       `,
-      [userIds],
-    );
+        [userIds],
+      );
 
-    // ⭐ STEP 6: Build lookup map
-    const userMap = Object.fromEntries(
-      usersResult.rows.map((user) => [user.user_id, user]),
-    );
+      // ⭐ STEP 6: Build lookup map
+      const userMap = Object.fromEntries(
+        usersResult.rows.map((user) => [user.user_id, user]),
+      );
 
-    // ⭐ STEP 7: Enrich feed
-    const enrichedFeed = feed.map((post) => {
-      const reposter = userMap[post.owner];
+      // ⭐ STEP 7: Enrich feed
+      const enrichedFeed = feed.map((post) => {
+        const reposter = userMap[post.owner];
 
-      // 🔁 REPOST
-      if (post.repostOf && post.repostedPost) {
-        const originalAuthor = userMap[post.repostedPost.owner];
+        // 🔁 REPOST
+        if (post.repostOf && post.repostedPost) {
+          const originalAuthor = userMap[post.repostedPost.owner];
 
+          return {
+            ...post,
+
+            username: reposter?.username || "",
+            full_name: reposter?.full_name || "",
+            type: reposter?.type || "normal",
+            profile_picture: reposter?.profile_picture || null,
+
+            repostedPost: {
+              ...post.repostedPost,
+              media_url: post.repostedPost.mediaUrl
+                ? JSON.parse(post.repostedPost.mediaUrl)
+                : [],
+              username: originalAuthor?.username || "",
+              full_name: originalAuthor?.full_name || "",
+              type: originalAuthor?.type || "normal",
+              profile_picture: originalAuthor?.profile_picture || null,
+              liked_by_me: post.repostedPost.likedBy?.includes(userId) || false,
+            },
+
+            liked_by: post.likedBy || [],
+            liked_by_me: false,
+            current_user: userId,
+            connection_status: "connected",
+          };
+        }
+
+        // 🟢 NORMAL POST
         return {
           ...post,
+
+          media_url: post.mediaUrl ? JSON.parse(post.mediaUrl) : [],
 
           username: reposter?.username || "",
           full_name: reposter?.full_name || "",
           type: reposter?.type || "normal",
           profile_picture: reposter?.profile_picture || null,
 
-          repostedPost: {
-            ...post.repostedPost,
-            media_url: post.repostedPost.mediaUrl
-              ? JSON.parse(post.repostedPost.mediaUrl)
-              : [],
-            username: originalAuthor?.username || "",
-            full_name: originalAuthor?.full_name || "",
-            type: originalAuthor?.type || "normal",
-            profile_picture: originalAuthor?.profile_picture || null,
-            liked_by_me: post.repostedPost.likedBy?.includes(userId) || false,
-          },
-
           liked_by: post.likedBy || [],
-          liked_by_me: false,
+          liked_by_me: post.likedBy?.includes(userId) || false,
           current_user: userId,
           connection_status: "connected",
         };
-      }
+      });
 
-      // 🟢 NORMAL POST
-      return {
-        ...post,
-
-        media_url: post.mediaUrl ? JSON.parse(post.mediaUrl) : [],
-
-        username: reposter?.username || "",
-        full_name: reposter?.full_name || "",
-        type: reposter?.type || "normal",
-        profile_picture: reposter?.profile_picture || null,
-
-        liked_by: post.likedBy || [],
-        liked_by_me: post.likedBy?.includes(userId) || false,
-        current_user: userId,
-        connection_status: "connected",
+      // ⭐ STEP 8: Prepare and cache response
+      const response = {
+        success: true,
+        feed: enrichedFeed,
+        limit,
+        offset,
+        currentUser: userId,
       };
-    });
 
-    // ⭐ STEP 8: Prepare and cache response
-    const response = {
-      success: true,
-      feed: enrichedFeed,
-      limit,
-      offset,
-      currentUser: userId,
-    };
+      // Cache the result
+      await feedCache.cacheFeed(userId, limit, offset, response);
 
-    // Cache the result
-    await feedCache.cacheFeed(userId, limit, offset, response);
-
-    // ⭐ STEP 9: Send enriched feed
-    return res.status(200).json(response);
-  } catch (err) {
-    console.error("Feed error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Unable to fetch feed",
-    });
-  }
-});
+      // ⭐ STEP 9: Send enriched feed
+      return res.status(200).json(response);
+    } catch (err) {
+      console.error("Feed error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to fetch feed",
+      });
+    }
+  },
+);
 
 // router.get("/checkLatestConnectionPost", isAuthenticated, async (req, res) => {
 //   const userId = req.currentUser.user_id;

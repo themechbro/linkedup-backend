@@ -1,6 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
+const {
+  messageConversationLimiter,
+  messageUserLimiter,
+} = require("../../middleware/rateLimiter");
+const {
+  messageTokenLimiter,
+  conversationFetchLimiter,
+} = require("../../middleware/messageLimiter");
 
 router.get("/all-conversation", async (req, res) => {
   try {
@@ -76,7 +84,7 @@ router.get("/all-conversation", async (req, res) => {
   }
 });
 // Send a new message - FIXED
-router.post("/send_new_message", async (req, res) => {
+router.post("/send_new_message", messageTokenLimiter, async (req, res) => {
   try {
     const currentUser = req.session.user;
     if (!currentUser) {
@@ -116,7 +124,6 @@ router.post("/send_new_message", async (req, res) => {
     const message = result.rows[0];
     const io = req.app.get("io");
     // io.to(receiver_id).emit("new message", message);
-
     const unread = await pool.query(
       `SELECT COUNT(*) as unread_count
    FROM messages
@@ -142,33 +149,38 @@ router.post("/send_new_message", async (req, res) => {
 });
 
 // Get Messages - FIXED
-router.get("/get-coversation-specific/:userId", async (req, res) => {
-  try {
-    const currentUser = req.session.user;
-    if (!currentUser) {
-      return res.status(401).json({ message: "Unauthorized", success: false });
-    }
+router.get(
+  "/get-coversation-specific/:userId",
+  conversationFetchLimiter,
+  async (req, res) => {
+    try {
+      const currentUser = req.session.user;
+      if (!currentUser) {
+        return res
+          .status(401)
+          .json({ message: "Unauthorized", success: false });
+      }
 
-    const { userId } = req.params;
-    const limit = parseInt(req.query.limit) || 50; // ✅ FIXED
-    const offset = parseInt(req.query.offset) || 0; // ✅ FIXED
+      const { userId } = req.params;
+      const limit = parseInt(req.query.limit) || 50; // ✅ FIXED
+      const offset = parseInt(req.query.offset) || 0; // ✅ FIXED
 
-    // Check if connected
-    const connectionCheck = await pool.query(
-      `SELECT * FROM connections 
+      // Check if connected
+      const connectionCheck = await pool.query(
+        `SELECT * FROM connections 
        WHERE user_id = $1 AND connection_id = $2`,
-      [currentUser.user_id, userId],
-    );
+        [currentUser.user_id, userId],
+      );
 
-    if (connectionCheck.rows.length === 0) {
-      return res.status(403).json({
-        message: "Not connected with this user",
-        success: false,
-      });
-    }
+      if (connectionCheck.rows.length === 0) {
+        return res.status(403).json({
+          message: "Not connected with this user",
+          success: false,
+        });
+      }
 
-    // Fetch messages
-    const query = `
+      // Fetch messages
+      const query = `
       SELECT 
         m.*,
         u.full_name AS sender_name,
@@ -183,47 +195,48 @@ router.get("/get-coversation-specific/:userId", async (req, res) => {
       LIMIT $3 OFFSET $4
     `;
 
-    const result = await pool.query(query, [
-      currentUser.user_id,
-      userId,
-      limit,
-      offset,
-    ]);
+      const result = await pool.query(query, [
+        currentUser.user_id,
+        userId,
+        limit,
+        offset,
+      ]);
 
-    // Mark messages as read
-    await pool.query(
-      `UPDATE messages 
+      // Mark messages as read
+      await pool.query(
+        `UPDATE messages 
        SET read = TRUE 
        WHERE receiver_id = $1 AND sender_id = $2 AND read = FALSE`,
-      [currentUser.user_id, userId],
-    );
+        [currentUser.user_id, userId],
+      );
 
-    // Emiting to front about unreads ------
-    const io = req.app.get("io");
-    const unread = await pool.query(
-      `SELECT COUNT(*) as unread_count
+      // Emiting to front about unreads ------
+      const io = req.app.get("io");
+      const unread = await pool.query(
+        `SELECT COUNT(*) as unread_count
    FROM messages
    WHERE receiver_id = $1 AND read = FALSE`,
-      [currentUser.user_id],
-    );
+        [currentUser.user_id],
+      );
 
-    io.to(currentUser.user_id).emit("unread_count_update", {
-      unread: parseInt(unread.rows[0].unread_count),
-    });
-    // ---------
+      io.to(currentUser.user_id).emit("unread_count_update", {
+        unread: parseInt(unread.rows[0].unread_count),
+      });
+      // ---------
 
-    return res.status(200).json({
-      success: true,
-      messages: result.rows.reverse(), // Oldest first
-    });
-  } catch (err) {
-    console.error("Error fetching messages:", err);
-    return res.status(500).json({
-      message: "Internal server error",
-      success: false,
-    });
-  }
-});
+      return res.status(200).json({
+        success: true,
+        messages: result.rows.reverse(), // Oldest first
+      });
+    } catch (err) {
+      console.error("Error fetching messages:", err);
+      return res.status(500).json({
+        message: "Internal server error",
+        success: false,
+      });
+    }
+  },
+);
 
 // Mark as read - FIXED
 router.post("/mark_as_read", async (req, res) => {

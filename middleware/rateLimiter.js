@@ -342,6 +342,7 @@ export const likePostLimiter = rateLimit({
   },
 });
 
+// Search
 export const searchUserLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
 
@@ -393,5 +394,65 @@ export const searchIpLimiter = rateLimit({
     const ip = typeof ipInfo === "string" ? ipInfo : ipInfo.ip;
 
     return `search:ip:${ip}`;
+  },
+});
+
+// Messaging
+export const messageUserLimiter = rateLimit({
+  windowMs: 60 * 1000,
+
+  max: 30,
+
+  message: {
+    success: false,
+    message: "You're sending messages too fast.",
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  store: new RedisStore({
+    sendCommand: (...args) => redis.sendCommand(args),
+  }),
+
+  keyGenerator: (req, res) => {
+    if (req.session?.user?.user_id) {
+      return `message:user:${req.session.user.user_id}`;
+    }
+
+    const ipInfo = ipKeyGenerator(req, res);
+    const ip = typeof ipInfo === "string" ? ipInfo : ipInfo.ip;
+
+    return `message:ip:${ip}`;
+  },
+});
+
+/**
+ * Per-conversation limiter (strong anti-spam)
+ */
+export const messageConversationLimiter = rateLimit({
+  windowMs: 60 * 1000,
+
+  max: 10,
+
+  message: {
+    success: false,
+    message: "Too many messages in this conversation.",
+  },
+
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  store: new RedisStore({
+    sendCommand: (...args) => redis.sendCommand(args),
+  }),
+
+  keyGenerator: (req) => {
+    const userId = req.session?.user?.user_id || "unknown";
+
+    const conversationId =
+      req.params.conversation_id || req.body.conversation_id || "unknown";
+
+    return `message:user:${userId}:conversation:${conversationId}`;
   },
 });
