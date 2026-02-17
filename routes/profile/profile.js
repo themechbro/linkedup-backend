@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../../db");
 const isAuthenticated = require("../../middleware/sessionChecker");
 const profileCache = require("../../redis/profileCacheManager");
+const { profileFetchLimiter } = require("../../middleware/profileRateLimiter");
 
 router.get("/view-profile", async (req, res) => {
   const user = req.session.user;
@@ -26,42 +27,47 @@ router.get("/view-profile", async (req, res) => {
   }
 });
 
-router.get("/fetch-profile", isAuthenticated, async (req, res) => {
-  const { user_id } = req.query;
-  if (!user_id) {
-    return res.status(400).json({ success: false, message: "Wrong way" });
-  }
-  try {
-    const cachedProfile = await profileCache.getCachedProfile(user_id);
+router.get(
+  "/fetch-profile",
+  isAuthenticated,
+  profileFetchLimiter,
+  async (req, res) => {
+    const { user_id } = req.query;
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: "Wrong way" });
+    }
+    try {
+      const cachedProfile = await profileCache.getCachedProfile(user_id);
 
-    if (cachedProfile) {
+      if (cachedProfile) {
+        return res
+          .status(200)
+          .json({ success: true, profile: cachedProfile, source: "redis" });
+      }
+
+      const microResponse = await fetch(
+        `${process.env.SPRING_MICROSERVICE}/api/profile/${user_id}`,
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+
+      if (!microResponse.ok) {
+        throw new Error("Profile Fetch service failed");
+      }
+      const profile = await microResponse.json();
+
+      await profileCache.cacheProfile(user_id, profile);
+
+      return res.status(200).json({ success: true, profile, source: "db" });
+    } catch (error) {
+      console.log(error);
       return res
-        .status(200)
-        .json({ success: true, profile: cachedProfile, source: "redis" });
+        .status(500)
+        .json({ success: false, message: "Internal Server Error" });
     }
-
-    const microResponse = await fetch(
-      `${process.env.SPRING_MICROSERVICE}/api/profile/${user_id}`,
-      {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-
-    if (!microResponse.ok) {
-      throw new Error("Profile Fetch service failed");
-    }
-    const profile = await microResponse.json();
-
-    await profileCache.cacheProfile(user_id, profile);
-
-    return res.status(200).json({ success: true, profile, source: "db" });
-  } catch (error) {
-    console.log(error);
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal Server Error" });
-  }
-});
+  },
+);
 
 module.exports = router;
