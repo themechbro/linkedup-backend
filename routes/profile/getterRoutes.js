@@ -247,76 +247,161 @@ router.get(
     const limit = parseInt(req.query.limit) || 10;
     const offset = parseInt(req.query.offset) || 0;
     const profileId = req.query.profileId;
+    const userId = req.currentUser.user_id;
 
     try {
-      const response = await pool.query(
-        `
-        SELECT 
-          p.id,
-          p.created_at,
-          p.content,
-          p.media_url,
-          p.likes,
-          p.owner,
-          p.liked_by,
-          p.repost_of,
-          p.repost_count,
-          p.status,
-
-          -- original post fields (if repost)
-          rp.id AS repost_id,
-          rp.owner AS repost_owner,
-          rp.content AS repost_content,
-          rp.media_url AS repost_media_url,
-          rp.created_at AS repost_created_at,
-          rp.likes AS repost_likes,
-          rp.liked_by AS repost_liked_by
-
-        FROM posts p
-
-        LEFT JOIN posts rp
-        ON p.repost_of = rp.id
-
-        WHERE p.owner = $1
-
-        ORDER BY p.created_at DESC
-        LIMIT $2 OFFSET $3
-        `,
-        [profileId, limit, offset],
+      const cachedPost = await profileCache.getCachedBrandPosts(
+        profileId,
+        limit,
+        offset,
       );
 
-      const posts = response.rows.map((row) => ({
-        id: row.id,
-        created_at: row.created_at,
-        content: row.content,
-        media_url: row.media_url,
-        likes: row.likes,
-        owner: row.owner,
-        liked_by: row.liked_by,
-        repost_of: row.repost_of,
-        repost_count: row.repost_count,
-        status: row.status,
+      if (cachedPost) {
+        return res.status(200).json({
+          enrichedPost: cachedPost.enrichedPost,
+          hasMore: cachedPost.hasMore,
+          success: true,
+          source: "cache",
+        });
+      }
+      // Fetch from Spring microservice
+      const resMicro = await fetch(
+        `${process.env.SPRING_MICROSERVICE}/api/feed/fetch-posts-brands?owner=${profileId}&offset=${offset}&limit=${limit}`,
+        { method: "GET" },
+      );
 
-        reposted_post: row.repost_id
-          ? {
-              id: row.repost_id,
-              owner: row.repost_owner,
-              content: row.repost_content,
-              media_url: row.repost_media_url,
-              created_at: row.repost_created_at,
-              likes: row.repost_likes,
-              liked_by: row.repost_liked_by,
-            }
-          : null,
-      }));
+      if (!resMicro.ok) {
+        throw new Error(`Feed microservice error: ${resMicro.status}`);
+      }
 
+      const data = await resMicro.json();
+      const posts = data.posts || [];
+
+      // Safe JSON parser
+      const safeParseMedia = (media) => {
+        try {
+          return media ? JSON.parse(media) : [];
+        } catch {
+          return [];
+        }
+      };
+
+      // Collect all unique user IDs (owner + repost owner)
+      const userIdSet = new Set();
+
+      posts.forEach((post) => {
+        if (post.owner) userIdSet.add(post.owner);
+        if (post.repostedPost?.owner) {
+          userIdSet.add(post.repostedPost.owner);
+        }
+      });
+
+      const userIds = Array.from(userIdSet);
+
+      // Fetch all users in single query
+      const usersResult = await pool.query(
+        `
+        SELECT user_id, username, full_name, type, profile_picture
+        FROM users
+        WHERE user_id = ANY($1)
+        `,
+        [userIds],
+      );
+
+      // Build lookup map
+      const userMap = Object.fromEntries(
+        usersResult.rows.map((user) => [user.user_id, user]),
+      );
+
+      // Enrich posts
+      const enrichedPost = posts.map((post) => {
+        const owner = userMap[post.owner];
+
+        // REPOST CASE
+        if (post.repostedPost) {
+          const originalAuthor = userMap[post.repostedPost.owner];
+
+          return {
+            ...post,
+
+            id: post.postId,
+
+            media_url: safeParseMedia(post.mediaUrl),
+
+            username: owner?.username || "",
+            full_name: owner?.full_name || "",
+            type: owner?.type || "normal",
+            profile_picture: owner?.profile_picture || null,
+
+            repostedPost: {
+              ...post.repostedPost,
+
+              id: post.repostedPost.post_id,
+
+              media_url: safeParseMedia(post.repostedPost.mediaUrl),
+
+              username: originalAuthor?.username || "",
+
+              full_name: originalAuthor?.full_name || "",
+
+              type: originalAuthor?.type || "normal",
+
+              profile_picture: originalAuthor?.profile_picture || null,
+
+              liked_by: post.repostedPost.likedBy || [],
+
+              liked_by_me: post.repostedPost.likedBy?.includes(userId) || false,
+            },
+
+            liked_by: post.likedBy || [],
+
+            liked_by_me: post.likedBy?.includes(userId) || false,
+
+            current_user: userId,
+
+            connection_status: "connected",
+          };
+        }
+
+        // NORMAL POST CASE
+        return {
+          ...post,
+
+          id: post.postId,
+
+          media_url: safeParseMedia(post.mediaUrl),
+
+          username: owner?.username || "",
+          full_name: owner?.full_name || "",
+          type: owner?.type || "normal",
+          profile_picture: owner?.profile_picture || null,
+
+          liked_by: post.likedBy || [],
+
+          liked_by_me: post.likedBy?.includes(userId) || false,
+
+          current_user: userId,
+
+          connection_status: "connected",
+        };
+      });
+      const hasMore = data.hasMore;
+      await profileCache.cacheBrandPosts(
+        profileId,
+        limit,
+        offset,
+        enrichedPost,
+        hasMore,
+      );
       return res.status(200).json({
-        posts,
-        hasMore: posts.length === limit,
+        enrichedPost,
+        hasMore,
         success: true,
+        source: "db",
       });
     } catch (error) {
-      console.log("fetch-posts-brands error:", error);
+      console.error("fetch-posts-brands error:", error);
+
       return res.status(500).json({
         message: "Internal Server Error",
         success: false,

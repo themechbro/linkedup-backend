@@ -9,6 +9,7 @@ class ProfileCacheManager {
     this.PROFILE_ABOUT = "profile:about:";
     this.PROFILE_EDU = "profile:edu:";
     this.PROFILE_WORK = "profile:work:";
+    this.BRAND_POST = "profile:brand:posts:";
   }
 
   getCachekey(profileId) {
@@ -23,6 +24,10 @@ class ProfileCacheManager {
   }
   getCachekeyWork(profileId) {
     return `${this.PROFILE_WORK}${profileId}`;
+  }
+
+  getCachekeyBrandPosts(profileId, limit, offset) {
+    return `${this.BRAND_POST}${profileId}:${limit}:${offset}`;
   }
 
   async getprofileKey(profileId) {
@@ -97,6 +102,38 @@ class ProfileCacheManager {
     }
   }
 
+  // Brand Posts
+  async cacheBrandPosts(
+    profileId,
+    limit,
+    offset,
+    postData,
+    hasMore,
+    ttl = null,
+  ) {
+    const cacheKey = this.getCachekeyBrandPosts(profileId, limit, offset);
+    const cacheTTL =
+      ttl || (postData.length === 0 ? this.EMPTY_FEED_TTL : this.DEFAULT_TTL);
+
+    try {
+      await redis.setEx(
+        cacheKey,
+        cacheTTL,
+        JSON.stringify({
+          enrichedPost: postData,
+          hasMore,
+        }),
+      );
+      console.log(
+        `💾 Cached post for brand ${profileId} (limit:${limit}, offset:${offset}, TTL:${cacheTTL}s)`,
+      );
+      return true;
+    } catch (error) {
+      console.error("Error caching feed:", error);
+      return false;
+    }
+  }
+
   // Getters
   async getCachedProfile(profileId) {
     const cacheKey = this.getCachekey(profileId);
@@ -167,6 +204,27 @@ class ProfileCacheManager {
       }
 
       console.log(`❌ Cache MISS for profile ${profileId} for Work`);
+      return null;
+    } catch (error) {
+      console.error("Error getting cached feed:", error);
+      return null;
+    }
+  }
+
+  async getCachedBrandPosts(profileId, limit, offset) {
+    const cacheKey = this.getCachekeyBrandPosts(profileId, limit, offset);
+
+    try {
+      const cached = await redis.get(cacheKey);
+
+      if (cached) {
+        console.log(
+          `✅ Cache HIT for posts for brand  ${profileId} (limit:${limit}, offset:${offset})`,
+        );
+        return JSON.parse(cached);
+      }
+
+      console.log(`❌ Cache MISS for brand posts ${profileId}`);
       return null;
     } catch (error) {
       console.error("Error getting cached feed:", error);
