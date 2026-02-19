@@ -262,6 +262,7 @@ router.get(
           hasMore: cachedPost.hasMore,
           success: true,
           source: "cache",
+          requestedBy: userId,
         });
       }
       // Fetch from Spring microservice
@@ -398,10 +399,44 @@ router.get(
         hasMore,
         success: true,
         source: "db",
+        requestedBy: userId,
       });
     } catch (error) {
       console.error("fetch-posts-brands error:", error);
 
+      return res.status(500).json({
+        message: "Internal Server Error",
+        success: false,
+      });
+    }
+  },
+);
+
+// Fetch brand jobs
+router.get(
+  "/fetch_brand_jobs_3",
+  isAuthenticated,
+  profileFetchLimiter,
+  async (req, res) => {
+    const userId = req.currentUser.user_id;
+    const profileId = req.query.profileId;
+
+    try {
+      const resMicro = await fetch(
+        `${process.env.SPRING_MICROSERVICE}/api/jobs_micro/get_jobs_for_brand_page/${profileId}`,
+        {
+          method: "GET",
+        },
+      );
+
+      const data = await resMicro.json();
+      return res.status(200).json({
+        jobs: data,
+        success: true,
+        requestedBy: userId,
+      });
+    } catch (error) {
+      console.log(error);
       return res.status(500).json({
         message: "Internal Server Error",
         success: false,
