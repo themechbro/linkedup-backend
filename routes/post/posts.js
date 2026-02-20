@@ -7,14 +7,13 @@ const isAuthenticated = require("../../middleware/sessionChecker");
 const redis = require("../../redis/redisClient");
 const feedCache = require("../../redis/feedCacheManager");
 const { exec } = require("child_process");
-const path = require("path");
-const fs = require("fs");
 const { convertToHLS, generateSprite } = require("./videoHelpers");
 const {
   postIpLimiter,
   postUserLimiter,
 } = require("../../middleware/rateLimiter");
 const { feedFetchLimiter } = require("../../middleware/feedLimiter");
+const { signInternalJwt } = require("../../utils/internalJwt");
 
 // Helper connections
 const getCachedConnections = async (userId) => {
@@ -101,6 +100,7 @@ router.post(
   },
 );
 
+// global post fetch (which is obselete)
 router.get("/", async (req, res) => {
   try {
     const currentUser = req.session.user;
@@ -556,6 +556,7 @@ router.get(
     const offset = parseInt(req.query.offset, 10) || 0;
 
     try {
+      const token = signInternalJwt(req.currentUser);
       // ⭐ STEP 1: Check Redis cache
       const cachedFeed = await feedCache.getCachedFeed(userId, limit, offset);
 
@@ -596,7 +597,10 @@ router.get(
         `${process.env.SPRING_MICROSERVICE}/api/feed?limit=${limit}&offset=${offset}`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
           body: JSON.stringify(connectionIds),
         },
       );
@@ -712,33 +716,11 @@ router.get(
   },
 );
 
-// router.get("/checkLatestConnectionPost", isAuthenticated, async (req, res) => {
-//   const userId = req.currentUser.user_id;
-
-//   const result = await pool.query(
-//     `SELECT connection_id FROM connections WHERE user_id = $1`,
-//     [userId],
-//   );
-
-//   const connectionIds = result.rows.map((r) => r.connection_id);
-
-//   const latest = await fetch(
-//     `${process.env.SPRING_MICROSERVICE}/api/feed/latest`,
-//     {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       body: JSON.stringify(connectionIds),
-//     },
-//   );
-
-//   const latestPostId = await latest.json();
-//   res.json({ latestPostId });
-// });
-
 router.get("/checkLatestConnectionPost", isAuthenticated, async (req, res) => {
   const userId = req.currentUser.user_id;
 
   try {
+    const token = signInternalJwt(req.currentUser);
     // Get user's connections
     const result = await pool.query(
       `SELECT connection_id FROM connections WHERE user_id = $1`,
@@ -756,7 +738,10 @@ router.get("/checkLatestConnectionPost", isAuthenticated, async (req, res) => {
       `${process.env.SPRING_MICROSERVICE}/api/feed/latest`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify(connectionIds),
       },
     );
