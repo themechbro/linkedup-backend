@@ -7,7 +7,11 @@ const isAuthenticated = require("../../middleware/sessionChecker");
 const redis = require("../../redis/redisClient");
 const feedCache = require("../../redis/feedCacheManager");
 const { exec } = require("child_process");
-const { convertToHLS, generateSprite } = require("./videoHelpers");
+const {
+  convertToHLS,
+  generateSprite,
+  generateSprites,
+} = require("./videoHelpers");
 const {
   postIpLimiter,
   postUserLimiter,
@@ -66,6 +70,7 @@ router.post(
 
           setImmediate(() => {
             generateSprite(file.filename);
+            generateSprites(file.flename, 2, 100);
           });
         }
 

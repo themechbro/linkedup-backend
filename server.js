@@ -128,6 +128,9 @@ app.use("/api/profile/fetch/", require("./routes/profile/profile"));
 // Search
 app.use("/api/linkedup-search", require("./routes/search/search"));
 
+// Notifications
+app.use("/api/notifications", require("./routes/notifications/notifiy"));
+
 // app.listen(8000, "0.0.0.0", () => {
 //   console.log("Server is running on port 8000");
 // });

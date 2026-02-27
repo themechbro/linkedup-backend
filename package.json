@@ -1,5 +1,8 @@
 {
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.999.0",
+    "@aws-sdk/lib-storage": "^3.999.0",
+    "@aws-sdk/node-http-handler": "^3.370.0",
     "@frozenjs/express-status-monitor": "^2025.6.22",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
