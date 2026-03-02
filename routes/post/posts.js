@@ -751,9 +751,17 @@ router.get("/checkLatestConnectionPost", isAuthenticated, async (req, res) => {
       },
     );
 
-    // const latestPostId = await latest.json();
+    if (!latest.ok) {
+      console.error("Spring service failed:", latest.status);
+      return res.status(500).json({ error: "Feed service unavailable" });
+    }
 
     const latestResponse = await latest.json();
+
+    if (!latestResponse || !latestResponse.postId) {
+      return res.json({ latestPostId: null, hasNewPosts: false });
+    }
+
     const latestPostId = latestResponse.postId;
 
     // ✅ NEW: Check last seen post from Redis

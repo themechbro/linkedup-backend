@@ -10,6 +10,8 @@ const {
   commentUserLimiter,
   commentIpLimiter,
 } = require("../middleware/rateLimiter");
+const { createNotification } = require("./functions/notificationCreator");
+const fetchPostOwner = require("./helpers/fetchPostowner");
 
 const commentImagesPath = path.join(
   __dirname,
@@ -100,27 +102,55 @@ router.post(
       let media_url = null;
 
       if (req.file) {
-        // Move uploaded image to comment-images folder
-        const ext = req.file.originalname.split(".").pop();
         const filename = `${Date.now()}-${req.file.originalname}`;
         const finalPath = path.join(commentImagesPath, filename);
 
-        fs.renameSync(req.file.path, finalPath); // move file from temp folder
+        fs.renameSync(req.file.path, finalPath);
 
         media_url = `/uploads/comment-images/${filename}`;
       }
 
       const result = await pool.query(
-        `INSERT INTO comments (post_id, user_id, parent_comment_id, content, media_url)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
+        `INSERT INTO comments 
+         (post_id, user_id, parent_comment_id, content, media_url)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
         [post_id, user_id, parent_comment_id, content, media_url],
       );
 
-      res.status(201).json({ success: true, comment: result.rows[0] });
+      const newComment = result.rows[0];
+
+      // ✅ Fetch post owner
+      const postOwner = await fetchPostOwner(post_id);
+
+      // ✅ Create notification only if not self
+      if (postOwner && postOwner !== user_id) {
+        const io = req.app.get("io");
+
+        await createNotification({
+          recipientId: postOwner,
+          actorId: user_id,
+          type: "COMMENT_POST",
+          entityId: post_id,
+          entityType: "post",
+          metadata: {
+            commentId: newComment.id,
+            preview: content.slice(0, 80),
+          },
+          io,
+        });
+      }
+
+      res.status(201).json({
+        success: true,
+        comment: newComment,
+      });
     } catch (err) {
       console.error("Error posting comment:", err);
-      res.status(500).json({ success: false, message: "Server error" });
+      res.status(500).json({
+        success: false,
+        message: "Server error",
+      });
     }
   },
 );

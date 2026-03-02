@@ -28,10 +28,16 @@ router.get("/notifications", isAuthenticated, async (req, res) => {
         u.user_id AS actor_id,
         u.username,
         u.full_name,
-        u.profile_picture
+        u.profile_picture,
+
+        p.id AS post_id,
+        p.content AS post_content
 
       FROM notifications n
       JOIN users u ON n.actor_id = u.user_id
+      LEFT JOIN posts p
+      ON n.entity_type='post'
+      AND n.entity_id= p.id
       WHERE n.recipient_id = $1
       ORDER BY n.created_at DESC
       LIMIT $2 OFFSET $3
