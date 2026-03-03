@@ -2,39 +2,9 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
 const isAuthenticated = require("../../middleware/sessionChecker");
-
+const redis = require("../../redis/redisClient");
+const { createNotification } = require("../functions/notificationCreator");
 // send request
-// router.post("/request", async (req, res) => {
-//   try {
-//     const { receiver_id } = req.body;
-//     const sender_id = req.session.user.user_id;
-//     const exists = await pool.query(
-//       `SELECT * FROM connections
-//        WHERE user_id=$1 AND connection_id=$2`,
-//       [sender_id, receiver_id]
-//     );
-//     if (exists.rows.length > 0)
-//       return res.status(400).json({ message: "Already connected" });
-
-//     const pending = await pool.query(
-//       `SELECT * FROM connection_requests
-//        WHERE sender_id=$1 AND receiver_id=$2`,
-//       [sender_id, receiver_id]
-//     );
-//     if (pending.rows.length > 0)
-//       return res.status(400).json({ message: "Request already sent" });
-
-//     await pool.query(
-//       `INSERT INTO connection_requests (sender_id, receiver_id) VALUES ($1, $2)`,
-//       [sender_id, receiver_id]
-//     );
-//     res.json({ message: "Connection request sent" });
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ message: "Internal server error" });
-//   }
-// });
-
 router.post("/request", async (req, res) => {
   try {
     const { receiver_id } = req.body;
@@ -70,6 +40,18 @@ router.post("/request", async (req, res) => {
       [sender_id, receiver_id],
     );
 
+    /* 🔔 Create Notification */
+    const notif = await createNotification({
+      recipientId: receiver_id,
+      actorId: sender_id,
+      type: "CONNECTION_REQUEST",
+      entityId: sender_id,
+      entityType: "USER",
+      metadata: {},
+    });
+
+    console.log("Notification result:", notif);
+
     res.json({ message: "Connection request sent" });
   } catch (err) {
     console.error(err);
@@ -79,62 +61,121 @@ router.post("/request", async (req, res) => {
 // Accept request
 // Accept request
 router.post("/accept", async (req, res) => {
+  const client = await pool.connect();
+
   try {
-    const { sender_id } = req.body;
+    const { sender_id, notif_id } = req.body;
     const receiver_id = req.session.user.user_id;
 
-    const existingConnection = await pool.query(
-      `SELECT * FROM connections 
+    await client.query("BEGIN");
+
+    const existingConnection = await client.query(
+      `SELECT 1 FROM connections 
        WHERE (user_id = $1 AND connection_id = $2) 
           OR (user_id = $2 AND connection_id = $1)`,
       [sender_id, receiver_id],
     );
 
     if (existingConnection.rows.length > 0) {
+      await client.query("ROLLBACK");
       return res.status(400).json({
         message: "Already connected",
         success: false,
       });
     }
 
-    // 👇 DELETE the request after creating connection
-    await pool.query(
+    // Delete connection request
+    await client.query(
       `DELETE FROM connection_requests 
        WHERE sender_id=$1 AND receiver_id=$2`,
       [sender_id, receiver_id],
     );
 
     // Create bidirectional connection
-    await pool.query(
+    await client.query(
       `INSERT INTO connections (user_id, connection_id) 
        VALUES ($1, $2), ($2, $1)`,
       [sender_id, receiver_id],
     );
+    // Creating notification for the one as req accepted
+    await createNotification({
+      recipientId: sender_id,
+      actorId: receiver_id,
+      type: "CONNECTION_ACCEPTED",
+      entityId: receiver_id,
+      entityType: "USER",
+      metadata: {},
+    });
 
-    res.json({ message: "You are now connected!" });
+    /* 🔔 If coming from notification, update it */
+    if (notif_id) {
+      await client.query(
+        `UPDATE notifications
+         SET metadata = jsonb_set(
+               COALESCE(metadata, '{}'::jsonb),
+               '{connection_status}',
+               '"accepted"'
+             ),
+             is_read = true
+         WHERE id = $1`,
+        [notif_id],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    res.json({ message: "You are now connected!", success: true });
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err);
     res.status(500).json({ message: "Internal server error" });
+  } finally {
+    client.release();
   }
 });
 
 // reject request
 // reject request
 router.post("/reject", async (req, res) => {
+  const client = await pool.connect();
+
   try {
-    const { sender_id } = req.body;
+    const { sender_id, notif_id } = req.body;
     const receiver_id = req.session.user.user_id;
 
-    // 👇 DELETE instead of UPDATE
-    await pool.query(
+    await client.query("BEGIN");
+
+    // Delete the request
+    await client.query(
       `DELETE FROM connection_requests 
        WHERE sender_id=$1 AND receiver_id=$2`,
       [sender_id, receiver_id],
     );
 
-    res.json({ message: "Request rejected" });
+    /* 🔔 If triggered from notification, update it */
+    if (notif_id) {
+      await client.query(
+        `UPDATE notifications
+         SET metadata = jsonb_set(
+               COALESCE(metadata, '{}'::jsonb),
+               '{connection_status}',
+               '"rejected"'
+             ),
+             is_read = true
+         WHERE id = $1`,
+        [notif_id],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    res.json({ message: "Request rejected", success: true });
   } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
     res.status(500).json({ message: "Internal server error" });
+  } finally {
+    client.release();
   }
 });
 
