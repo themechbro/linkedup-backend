@@ -70,7 +70,6 @@ router.post(
 
           setImmediate(() => {
             generateSprite(file.filename);
-            generateSprites(file.flename, 2, 100);
           });
         }
 

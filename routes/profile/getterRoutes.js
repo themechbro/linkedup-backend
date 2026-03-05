@@ -445,4 +445,50 @@ router.get(
   },
 );
 
+// skills
+router.get(
+  "/fetch-skills",
+  isAuthenticated,
+  profileFetchLimiter,
+  async (req, res) => {
+    const { profileId } = req.query;
+
+    if (!profileId) {
+      return res.status(400).json({ message: "Incomplete", success: false });
+    }
+
+    try {
+      const cachedProfileSkill = await profileCache.getCachedSkills(profileId);
+      if (cachedProfileSkill) {
+        return res.status(200).json({
+          success: true,
+          skills: cachedProfileSkill,
+          source: "redis",
+          message: "Fetch Success from cache",
+        });
+      }
+
+      const result = await pool.query(
+        `
+        SELECT * FROM skills WHERE user_id=$1
+        `,
+        [profileId],
+      );
+      const skills = result.rows;
+      await profileCache.cacheProfileSkill(profileId, skills);
+      return res.status(200).json({
+        message: "Fetch success",
+        skills,
+        success: true,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        message: "Internal Server Error",
+        success: false,
+      });
+    }
+  },
+);
+
 module.exports = router;

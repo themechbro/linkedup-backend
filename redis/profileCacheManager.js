@@ -10,6 +10,7 @@ class ProfileCacheManager {
     this.PROFILE_EDU = "profile:edu:";
     this.PROFILE_WORK = "profile:work:";
     this.BRAND_POST = "profile:brand:posts:";
+    this.PROFILE_SKILL = "profile:skill:";
   }
 
   getCachekey(profileId) {
@@ -18,6 +19,9 @@ class ProfileCacheManager {
 
   getCachekeyAbout(profileId) {
     return `${this.PROFILE_ABOUT}${profileId}`;
+  }
+  getCachekeySkill(profileId) {
+    return `${this.PROFILE_SKILL}${profileId}`;
   }
   getCachekeyEdu(profileId) {
     return `${this.PROFILE_EDU}${profileId}`;
@@ -68,6 +72,22 @@ class ProfileCacheManager {
       return true;
     } catch (error) {
       console.error("Error caching About for profile:", error);
+      return false;
+    }
+  }
+
+  // Skill
+  async cacheProfileSkill(profileId, skills, ttl = null) {
+    const key = this.getCachekeySkill(profileId);
+    const cacheTTL =
+      ttl || (skills.length === 0 ? this.EMPTY_TTL : this.DEFAULT_TTL);
+
+    try {
+      await redis.setEx(key, cacheTTL, JSON.stringify(skills));
+      console.log(`💾 Cached Profile Skill ${profileId}`);
+      return true;
+    } catch (error) {
+      console.error("Error caching Skill for profile:", error);
       return false;
     }
   }
@@ -172,7 +192,24 @@ class ProfileCacheManager {
       return null;
     }
   }
+  async getCachedSkills(profileId) {
+    const cacheKey = this.getCachekeySkill(profileId);
 
+    try {
+      const cached = await redis.get(cacheKey);
+
+      if (cached) {
+        console.log(`✅ Cache HIT for profile ${profileId} for Skills )`);
+        return JSON.parse(cached);
+      }
+
+      console.log(`❌ Cache MISS for profile ${profileId} for Skills`);
+      return null;
+    } catch (error) {
+      console.error("Error getting cached Skills:", error);
+      return null;
+    }
+  }
   async getCachedEdu(profileId) {
     const cacheKey = this.getCachekeyEdu(profileId);
 

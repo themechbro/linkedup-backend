@@ -283,4 +283,35 @@ router.post("/post-company-hq", apiLimiter, async (req, res) => {
   }
 });
 
+// post Skill for normal users
+router.post("/skills", async (req, res) => {
+  try {
+    const userId = req.user.user_id; // from auth middleware
+    const { skills } = req.body;
+
+    if (!Array.isArray(skills) || skills.length === 0) {
+      return res.status(400).json({ error: "Skills array required" });
+    }
+
+    const query = `
+      INSERT INTO skills (user_id, name, top_skill)
+      SELECT $1, s.name, s.top_skill
+      FROM jsonb_to_recordset($2::jsonb)
+      AS s(name text, top_skill boolean)
+      ON CONFLICT (user_id, name)
+      DO UPDATE SET top_skill = EXCLUDED.top_skill
+      RETURNING *;
+    `;
+
+    const result = await pool.query(query, [userId, JSON.stringify(skills)]);
+    res.status(201).json({
+      message: "Skills added",
+      inserted: result.rows,
+    });
+  } catch (err) {
+    console.error("Error inserting skills:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;
