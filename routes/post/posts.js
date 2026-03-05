@@ -2,22 +2,24 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../../db");
 const upload = require("../../middleware/upload");
+const fs = require("fs");
+const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 const isAuthenticated = require("../../middleware/sessionChecker");
 const redis = require("../../redis/redisClient");
 const feedCache = require("../../redis/feedCacheManager");
-const { exec } = require("child_process");
-const {
-  convertToHLS,
-  generateSprite,
-  generateSprites,
-} = require("./videoHelpers");
+const { convertToHLS, generateSprite } = require("./videoHelpers");
 const {
   postIpLimiter,
   postUserLimiter,
 } = require("../../middleware/rateLimiter");
 const { feedFetchLimiter } = require("../../middleware/feedLimiter");
 const { signInternalJwt } = require("../../utils/internalJwt");
+const {
+  getPublicObjectUrl,
+  uploadFile,
+  uploadDirectory,
+} = require("../../utils/s3Storage");
 
 // Helper connections
 const getCachedConnections = async (userId) => {
@@ -48,6 +50,92 @@ const getCachedConnections = async (userId) => {
   return connectionIds;
 };
 
+const removePathIfExists = async (targetPath, asDirectory = false) => {
+  if (!targetPath) return;
+
+  try {
+    if (asDirectory) {
+      await fs.promises.rm(targetPath, { recursive: true, force: true });
+      return;
+    }
+
+    await fs.promises.unlink(targetPath);
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      console.error(`Cleanup failed for ${targetPath}:`, err);
+    }
+  }
+};
+
+const uploadImageToKrutrim = async (file) => {
+  const imageKey = `posts/images/${file.filename}`;
+
+  try {
+    await uploadFile({
+      localPath: file.path,
+      key: imageKey,
+      contentType: file.mimetype,
+    });
+
+    return {
+      url: getPublicObjectUrl(imageKey),
+      type: "images",
+    };
+  } finally {
+    await removePathIfExists(file.path);
+  }
+};
+
+const uploadVideoToKrutrim = async (file) => {
+  const videoId = path.parse(file.filename).name;
+  const hlsPrefix = `posts/hls/${videoId}`;
+  const spriteKey = `posts/sprites/${videoId}/sprite.jpg`;
+
+  let hlsOutputDir = null;
+  let spritePath = null;
+
+  try {
+    const [hlsResult, generatedSpritePath] = await Promise.all([
+      convertToHLS(file.filename),
+      generateSprite(file.filename),
+    ]);
+
+    hlsOutputDir = hlsResult.outputDir;
+    spritePath = generatedSpritePath;
+
+    await uploadDirectory({
+      localDir: hlsOutputDir,
+      keyPrefix: hlsPrefix,
+    });
+
+    await uploadFile({
+      localPath: spritePath,
+      key: spriteKey,
+      contentType: "image/jpeg",
+    });
+
+    return {
+      url: getPublicObjectUrl(`${hlsPrefix}/index.m3u8`),
+      type: "videos",
+      sprite_url: getPublicObjectUrl(spriteKey),
+    };
+  } finally {
+    await Promise.all([
+      removePathIfExists(file.path),
+      removePathIfExists(hlsOutputDir, true),
+      removePathIfExists(spritePath ? path.dirname(spritePath) : null, true),
+    ]);
+  }
+};
+
+const processPostMediaFile = async (file) => {
+  if (file.mimetype.startsWith("video")) {
+    return uploadVideoToKrutrim(file);
+  }
+
+  return uploadImageToKrutrim(file);
+};
+
 router.post(
   "/",
   postUserLimiter,
@@ -62,24 +150,9 @@ router.post(
       const { content } = req.body;
       const owner = req.session.user.user_id;
 
-      const media = req.files.map((file) => {
-        const isVideo = file.mimetype.startsWith("video");
-
-        if (isVideo) {
-          convertToHLS(file.filename); // 🔥 FFmpeg runs here
-
-          setImmediate(() => {
-            generateSprite(file.filename);
-          });
-        }
-
-        return {
-          url: isVideo
-            ? `/hls/${file.filename.split(".")[0]}/index.m3u8` // ✅ HLS url
-            : `/uploads/images/${file.filename}`,
-          type: isVideo ? "videos" : "images",
-        };
-      });
+      const media = await Promise.all(
+        (req.files || []).map(processPostMediaFile),
+      );
 
       const result = await pool.query(
         `INSERT INTO posts (content, media_url, likes, status, owner, created_at)
@@ -288,15 +361,9 @@ router.put(
         });
       }
 
-      const newMedia = (req.files || []).map((file) => {
-        const isVideo = file.mimetype.startsWith("video");
-        const type = isVideo ? "videos" : "images";
-
-        return {
-          url: `/uploads/${type}/${file.filename}`,
-          type,
-        };
-      });
+      const newMedia = await Promise.all(
+        (req.files || []).map(processPostMediaFile),
+      );
 
       const finalMedia = [...existingMediaList, ...newMedia];
 

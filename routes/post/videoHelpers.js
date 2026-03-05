@@ -2,7 +2,19 @@ const path = require("path");
 const fs = require("fs");
 const { exec } = require("child_process");
 
-function convertToHLS(filename) {
+function runCommand(cmd) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, (err, stdout, stderr) => {
+      if (err) {
+        return reject(new Error(stderr || err.message));
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function convertToHLS(filename) {
+  const videoId = path.parse(filename).name;
   const inputPath = path.join(
     __dirname,
     "..",
@@ -18,7 +30,7 @@ function convertToHLS(filename) {
     "..",
     "uploads",
     "hls",
-    filename.split(".")[0],
+    videoId,
   );
 
   if (!fs.existsSync(outputDir)) {
@@ -26,19 +38,16 @@ function convertToHLS(filename) {
   }
 
   const outputPath = path.join(outputDir, "index.m3u8");
+  const segmentPattern = path.join(outputDir, "segment_%03d.ts");
 
-  const cmd = `ffmpeg -i "${inputPath}" -profile:v baseline -level 3.0 -start_number 0 -hls_time 10 -hls_list_size 0 -hls_segment_filename "${outputDir}/segment_%03d.ts" -f hls "${outputPath}"`;
+  const cmd = `ffmpeg -i "${inputPath}" -profile:v baseline -level 3.0 -start_number 0 -hls_time 10 -hls_list_size 0 -hls_segment_filename "${segmentPattern}" -f hls "${outputPath}"`;
 
-  exec(cmd, (err, stdout, stderr) => {
-    if (err) {
-      console.error("FFmpeg error:", stderr);
-    } else {
-      console.log("HLS created for:", filename);
-    }
-  });
+  await runCommand(cmd);
+  return { videoId, outputDir, outputPath };
 }
 
-function generateSprite(filename) {
+async function generateSprite(filename) {
+  const videoId = path.parse(filename).name;
   const inputPath = path.join(
     __dirname,
     "..",
@@ -54,7 +63,7 @@ function generateSprite(filename) {
     "..",
     "uploads",
     "sprites",
-    filename.split(".")[0],
+    videoId,
   );
 
   if (!fs.existsSync(outputDir)) {
@@ -65,10 +74,8 @@ function generateSprite(filename) {
 
   const cmd = `ffmpeg -i "${inputPath}" -vf "fps=1/5,scale=160:90,tile=10x10" -q:v 2 "${spritePath}"`;
 
-  exec(cmd, (err) => {
-    if (err) console.error("Sprite error:", err);
-    else console.log("Sprite created:", filename);
-  });
+  await runCommand(cmd);
+  return spritePath;
 }
 
 function generateVTT(filename, duration) {
@@ -78,7 +85,7 @@ function generateVTT(filename, duration) {
     "..",
     "uploads",
     "sprites",
-    filename.split(".")[0],
+    path.parse(filename).name,
   );
 
   const vttPath = path.join(outputDir, "sprite.vtt");
