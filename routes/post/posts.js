@@ -4,6 +4,7 @@ const pool = require("../../db");
 const upload = require("../../middleware/upload");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const isAuthenticated = require("../../middleware/sessionChecker");
 const redis = require("../../redis/redisClient");
@@ -17,8 +18,10 @@ const { feedFetchLimiter } = require("../../middleware/feedLimiter");
 const { signInternalJwt } = require("../../utils/internalJwt");
 const {
   getPublicObjectUrl,
+  uploadBuffer,
   uploadFile,
   uploadDirectory,
+  deleteObject,
 } = require("../../utils/s3Storage");
 
 // Helper connections
@@ -67,23 +70,289 @@ const removePathIfExists = async (targetPath, asDirectory = false) => {
   }
 };
 
-const uploadImageToKrutrim = async (file) => {
-  const imageKey = `posts/images/${file.filename}`;
+const rollbackTransaction = async (client) => {
+  if (!client) return;
 
   try {
-    await uploadFile({
-      localPath: file.path,
-      key: imageKey,
-      contentType: file.mimetype,
-    });
-
-    return {
-      url: getPublicObjectUrl(imageKey),
-      type: "images",
-    };
-  } finally {
-    await removePathIfExists(file.path);
+    await client.query("ROLLBACK");
+  } catch (err) {
+    if (err.code !== "25P01") {
+      console.error("Rollback failed:", err);
+    }
   }
+};
+
+const IMAGE_CONTENT_TYPE_FALLBACKS = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+
+const buildDeterministicPostImageKey = (hash) => `posts/images/${hash}`;
+
+const computeFileSha256 = (fileBuffer) =>
+  crypto.createHash("sha256").update(fileBuffer).digest("hex");
+
+// Gemini Suggestion for not maxing RAM
+const computeFileSha256Stream = (filePath) => {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", (err) => reject(err));
+  });
+};
+
+const parsePostMediaList = (mediaValue) => {
+  if (Array.isArray(mediaValue)) return mediaValue;
+
+  if (typeof mediaValue === "string") {
+    try {
+      const parsed = JSON.parse(mediaValue);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+};
+
+const getImageUrlCountsFromMediaList = (mediaList) => {
+  const counts = new Map();
+
+  for (const item of mediaList || []) {
+    if (item?.type !== "images" || typeof item?.url !== "string") {
+      continue;
+    }
+
+    counts.set(item.url, (counts.get(item.url) || 0) + 1);
+  }
+
+  return counts;
+};
+
+const getMediaRowsByUrls = async (client, urls) => {
+  if (!urls.length) return new Map();
+
+  const result = await client.query(
+    `SELECT id, url, object_key, usage_count
+     FROM media
+     WHERE url = ANY($1)`,
+    [urls],
+  );
+
+  return new Map(result.rows.map((row) => [row.url, row]));
+};
+
+const getImageMediaUsageCounts = async (client, mediaList) => {
+  const imageUrlCounts = getImageUrlCountsFromMediaList(mediaList);
+  const urls = Array.from(imageUrlCounts.keys());
+
+  if (!urls.length) return new Map();
+
+  const mediaRowsByUrl = await getMediaRowsByUrls(client, urls);
+  const mediaCounts = new Map();
+
+  for (const [url, count] of imageUrlCounts.entries()) {
+    const mediaRow = mediaRowsByUrl.get(url);
+    if (!mediaRow) continue;
+
+    mediaCounts.set(mediaRow.id, (mediaCounts.get(mediaRow.id) || 0) + count);
+  }
+
+  return mediaCounts;
+};
+
+const decrementMediaUsageBy = async (client, mediaId, decrementBy = 1) => {
+  if (!mediaId || decrementBy <= 0) return null;
+
+  const usageResult = await client.query(
+    `UPDATE media
+     SET usage_count = GREATEST(usage_count - $2, 0)
+     WHERE id = $1
+     RETURNING id, object_key, usage_count`,
+    [mediaId, decrementBy],
+  );
+
+  if (usageResult.rowCount === 0) return null;
+
+  const mediaRow = usageResult.rows[0];
+  if (mediaRow.usage_count > 0) return null;
+
+  const deleteResult = await client.query(
+    `DELETE FROM media
+     WHERE id = $1 AND usage_count = 0
+     RETURNING object_key`,
+    [mediaId],
+  );
+
+  return deleteResult.rows[0]?.object_key || null;
+};
+
+// const getOrCreateDedupedImageMedia = async (file, client) => {
+//   const fileBuffer = await fs.promises.readFile(file.path); // These 2 lines can cause a node crash by maxing RAM
+//   const hash = computeFileSha256(fileBuffer); //
+
+//   const existingMedia = await client.query(
+//     `UPDATE media
+//      SET usage_count = usage_count + 1
+//      WHERE hash = $1
+//      RETURNING id, hash, object_key, url, size, content_type, usage_count`,
+//     [hash],
+//   );
+
+//   if (existingMedia.rowCount > 0) {
+//     return existingMedia.rows[0];
+//   }
+
+//   const extension = path.extname(file.originalname || "").toLowerCase();
+//   const contentType =
+//     file.mimetype ||
+//     IMAGE_CONTENT_TYPE_FALLBACKS[extension] ||
+//     "application/octet-stream";
+//   const objectKey = buildDeterministicPostImageKey(hash);
+//   const url = getPublicObjectUrl(objectKey);
+
+//   await uploadBuffer({
+//     key: objectKey,
+//     body: fileBuffer,
+//     contentType,
+//   });
+
+//   const insertResult = await client.query(
+//     `INSERT INTO media (hash, object_key, url, size, content_type, usage_count)
+//      VALUES ($1, $2, $3, $4, $5, 1)
+//      ON CONFLICT (hash)
+//      DO UPDATE SET usage_count = media.usage_count + 1
+//      RETURNING id, hash, object_key, url, size, content_type, usage_count`,
+//     [hash, objectKey, url, file.size || fileBuffer.length, contentType],
+//   );
+
+//   return insertResult.rows[0];
+// };
+
+const getOrCreateDedupedImageMedia = async (file, client) => {
+  // 1. Calculate hash via stream (RAM stays low!)
+  const hash = await computeFileSha256Stream(file.path);
+
+  // 2. Check Database
+  const existingMedia = await client.query(
+    `UPDATE media
+     SET usage_count = usage_count + 1
+     WHERE hash = $1
+     RETURNING id, hash, object_key, url, size, content_type, usage_count`,
+    [hash],
+  );
+
+  if (existingMedia.rowCount > 0) {
+    return existingMedia.rows[0];
+  }
+
+  // 3. Prepare Upload Data
+  const extension = path.extname(file.originalname || "").toLowerCase();
+  const contentType =
+    file.mimetype ||
+    IMAGE_CONTENT_TYPE_FALLBACKS[extension] ||
+    "application/octet-stream";
+  const objectKey = buildDeterministicPostImageKey(hash);
+  const url = getPublicObjectUrl(objectKey);
+
+  // 4. Upload via Stream instead of Buffer
+  const fileStream = fs.createReadStream(file.path);
+
+  await uploadStream({
+    // <-- Notice this changed to a stream uploader
+    key: objectKey,
+    body: fileStream,
+    contentType,
+  });
+
+  // 5. Database Insert
+  const insertResult = await client.query(
+    `INSERT INTO media (hash, object_key, url, size, content_type, usage_count)
+     VALUES ($1, $2, $3, $4, $5, 1)
+     ON CONFLICT (hash)
+     DO UPDATE SET usage_count = media.usage_count + 1
+     RETURNING id, hash, object_key, url, size, content_type, usage_count`,
+    [hash, objectKey, url, file.size, contentType],
+  );
+
+  return insertResult.rows[0];
+};
+
+const processUploadedPostFilesWithDedup = async (files, client) => {
+  const media = [];
+
+  for (const file of files) {
+    if (file?.mimetype?.startsWith("video")) {
+      media.push(await uploadVideoToKrutrim(file));
+      continue;
+    }
+
+    const dedupedMedia = await getOrCreateDedupedImageMedia(file, client);
+    media.push({ url: dedupedMedia.url, type: "images" });
+  }
+
+  return media;
+};
+
+const getFirstImageMediaIdFromMediaList = async (client, mediaList) => {
+  const imageUrls = [];
+
+  for (const item of mediaList || []) {
+    if (item?.type === "images" && typeof item?.url === "string") {
+      imageUrls.push(item.url);
+    }
+  }
+
+  if (!imageUrls.length) return null;
+
+  const rowsByUrl = await getMediaRowsByUrls(client, imageUrls);
+
+  for (const item of mediaList) {
+    if (item?.type !== "images" || typeof item?.url !== "string") continue;
+
+    const mediaRow = rowsByUrl.get(item.url);
+    if (mediaRow?.id) {
+      return mediaRow.id;
+    }
+  }
+
+  return null;
+};
+
+const getRemovedImageObjectKeys = async (
+  client,
+  beforeMediaList,
+  afterMediaList,
+) => {
+  const beforeCounts = await getImageMediaUsageCounts(client, beforeMediaList);
+  const afterCounts = await getImageMediaUsageCounts(client, afterMediaList);
+  const objectKeysToDelete = [];
+
+  for (const [mediaId, beforeCount] of beforeCounts.entries()) {
+    const afterCount = afterCounts.get(mediaId) || 0;
+    const decrementBy = beforeCount - afterCount;
+
+    if (decrementBy <= 0) continue;
+
+    const deletedObjectKey = await decrementMediaUsageBy(
+      client,
+      mediaId,
+      decrementBy,
+    );
+
+    if (deletedObjectKey) {
+      objectKeysToDelete.push(deletedObjectKey);
+    }
+  }
+
+  return objectKeysToDelete;
 };
 
 const uploadVideoToKrutrim = async (file) => {
@@ -128,38 +397,36 @@ const uploadVideoToKrutrim = async (file) => {
   }
 };
 
-const processPostMediaFile = async (file) => {
-  if (file.mimetype.startsWith("video")) {
-    return uploadVideoToKrutrim(file);
-  }
-
-  return uploadImageToKrutrim(file);
-};
-
 router.post(
   "/",
   postUserLimiter,
   postIpLimiter,
   upload.array("media", 10),
   async (req, res) => {
+    const files = req.files || [];
+    const client = await pool.connect();
+
     try {
+      await client.query("BEGIN");
+
       if (!req.session.user || !req.session.user.user_id) {
+        await rollbackTransaction(client);
         return res.status(401).json({ message: "Unauthorized" });
       }
 
       const { content } = req.body;
       const owner = req.session.user.user_id;
+      const media = await processUploadedPostFilesWithDedup(files, client);
+      const mediaId = await getFirstImageMediaIdFromMediaList(client, media);
 
-      const media = await Promise.all(
-        (req.files || []).map(processPostMediaFile),
+      const result = await client.query(
+        `INSERT INTO posts (content, media_url, media_id, likes, status, owner, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         RETURNING *`,
+        [content, JSON.stringify(media), mediaId, 0, "created", owner],
       );
 
-      const result = await pool.query(
-        `INSERT INTO posts (content, media_url, likes, status, owner, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       RETURNING *`,
-        [content, JSON.stringify(media), 0, "created", owner],
-      );
+      await client.query("COMMIT");
 
       // ⭐ Invalidate feed cache for all connections
       feedCache.invalidateConnectionFeeds(owner).catch((err) => {
@@ -171,8 +438,12 @@ router.post(
         post: result.rows[0],
       });
     } catch (err) {
+      await rollbackTransaction(client);
       console.error("Error creating post:", err);
       res.status(500).json({ message: "Internal Server Error" });
+    } finally {
+      await Promise.all(files.map((file) => removePathIfExists(file.path)));
+      client.release();
     }
   },
 );
@@ -326,9 +597,16 @@ router.put(
   "/edit/:post_id",
   upload.array("mediaFiles", 10),
   async (req, res) => {
+    const client = await pool.connect();
+    const files = req.files || [];
+    let objectKeysToDelete = [];
+
     try {
+      await client.query("BEGIN");
+
       const currentUser = req.session.user;
       if (!currentUser) {
+        await rollbackTransaction(client);
         return res.status(401).json({ message: "Unauthorized" });
       }
 
@@ -339,41 +617,62 @@ router.put(
       let existingMediaList = [];
       try {
         if (existingMedia) {
-          existingMediaList = JSON.parse(existingMedia);
+          const parsed = JSON.parse(existingMedia);
+          existingMediaList = Array.isArray(parsed) ? parsed : [];
         }
       } catch (err) {
         console.log("Invalid existing media JSON");
+        await rollbackTransaction(client);
+        return res.status(400).json({ message: "Invalid existing media JSON" });
       }
 
-      const postQuery = await pool.query("SELECT * FROM posts WHERE id=$1", [
-        post_id,
-      ]);
+      const postQuery = await client.query(
+        "SELECT * FROM posts WHERE id=$1 FOR UPDATE",
+        [post_id],
+      );
 
       if (postQuery.rows.length === 0) {
+        await rollbackTransaction(client);
         return res.status(404).json({ message: "Post not found" });
       }
 
       const post = postQuery.rows[0];
+      const previousMediaList = parsePostMediaList(post.media_url);
 
       if (post.owner !== currentUser.user_id) {
+        await rollbackTransaction(client);
         return res.status(403).json({
           message: "You cannot edit this post",
         });
       }
 
-      const newMedia = await Promise.all(
-        (req.files || []).map(processPostMediaFile),
-      );
-
+      const newMedia = await processUploadedPostFilesWithDedup(files, client);
       const finalMedia = [...existingMediaList, ...newMedia];
-
-      const updateQuery = await pool.query(
-        `UPDATE posts
-         SET content = $1, media_url = $2, status = $3
-         WHERE id = $4
-         RETURNING *`,
-        [content, JSON.stringify(finalMedia), status, post_id],
+      const nextMediaId = await getFirstImageMediaIdFromMediaList(
+        client,
+        finalMedia,
       );
+      objectKeysToDelete = await getRemovedImageObjectKeys(
+        client,
+        previousMediaList,
+        existingMediaList,
+      );
+
+      const updateQuery = await client.query(
+        `UPDATE posts
+         SET content = $1, media_url = $2, status = $3, media_id = $4
+         WHERE id = $5
+         RETURNING *`,
+        [content, JSON.stringify(finalMedia), status, nextMediaId, post_id],
+      );
+
+      await client.query("COMMIT");
+
+      for (const objectKey of objectKeysToDelete) {
+        deleteObject({ key: objectKey }).catch((error) => {
+          console.error("Failed to delete unused media object:", error);
+        });
+      }
 
       // ⭐ Invalidate cache for all connections
       feedCache.invalidateConnectionFeeds(currentUser.user_id).catch((err) => {
@@ -385,8 +684,12 @@ router.put(
         post: updateQuery.rows[0],
       });
     } catch (err) {
+      await rollbackTransaction(client);
       console.error("Error editing post:", err);
       return res.status(500).json({ message: "Internal Server Error" });
+    } finally {
+      await Promise.all(files.map((file) => removePathIfExists(file.path)));
+      client.release();
     }
   },
 );
@@ -463,31 +766,55 @@ router.post("/:postId/repost", async (req, res) => {
 });
 
 router.delete("/delete/:post_id", async (req, res) => {
+  const client = await pool.connect();
+  let objectKeysToDelete = [];
+
   try {
+    await client.query("BEGIN");
+
     const currentUser = req.session.user;
     if (!currentUser) {
+      await rollbackTransaction(client);
       return res.status(401).json({ message: "Unauthorized" });
     }
 
     const { post_id } = req.params;
 
-    const postQuery = await pool.query("SELECT * FROM posts WHERE id=$1", [
-      post_id,
-    ]);
+    const postQuery = await client.query(
+      "SELECT * FROM posts WHERE id=$1 FOR UPDATE",
+      [post_id],
+    );
 
     if (postQuery.rows.length === 0) {
+      await rollbackTransaction(client);
       return res.status(404).json({ message: "Post not found" });
     }
 
     const post = postQuery.rows[0];
+    const previousMediaList = parsePostMediaList(post.media_url);
 
     if (post.owner !== currentUser.user_id) {
+      await rollbackTransaction(client);
       return res.status(403).json({
         message: "You cannot delete this post",
       });
     }
 
-    await pool.query("DELETE FROM posts WHERE id=$1", [post_id]);
+    await client.query("DELETE FROM posts WHERE id=$1", [post_id]);
+
+    objectKeysToDelete = await getRemovedImageObjectKeys(
+      client,
+      previousMediaList,
+      [],
+    );
+
+    await client.query("COMMIT");
+
+    for (const objectKey of objectKeysToDelete) {
+      deleteObject({ key: objectKey }).catch((error) => {
+        console.error("Failed to delete unused media object:", error);
+      });
+    }
 
     // ⭐ Invalidate cache for all connections
     feedCache.invalidateConnectionFeeds(currentUser.user_id).catch((err) => {
@@ -498,8 +825,11 @@ router.delete("/delete/:post_id", async (req, res) => {
       message: "Post deleted successfully",
     });
   } catch (err) {
+    await rollbackTransaction(client);
     console.error("Error deleting post:", err);
     return res.status(500).json({ message: "Internal Server Error" });
+  } finally {
+    client.release();
   }
 });
 

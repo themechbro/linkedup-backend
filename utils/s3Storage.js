@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const { PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const s3 = require("../config/s3");
 
 const bucket = process.env.KRUTRIM_BUCKET;
@@ -124,6 +124,17 @@ async function uploadFile({ localPath, key, contentType }) {
   return uploadBuffer({ key, body, contentType: resolvedType });
 }
 
+async function deleteObject({ key }) {
+  assertS3Env();
+
+  await s3.send(
+    new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    }),
+  );
+}
+
 function walkFiles(dirPath) {
   const entries = fs.readdirSync(dirPath, { withFileTypes: true });
   const files = [];
@@ -180,4 +191,5 @@ module.exports = {
   uploadBuffer,
   uploadFile,
   uploadDirectory,
+  deleteObject,
 };
